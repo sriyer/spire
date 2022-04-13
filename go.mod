@@ -6,11 +6,11 @@ require (
 	cloud.google.com/go/secretmanager v1.4.0
 	cloud.google.com/go/security v1.3.0
 	cloud.google.com/go/storage v1.22.0
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v0.22.0
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v0.13.2
-	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute v0.5.0
-	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork v0.3.1
-	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources v0.3.1
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v0.23.0
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v0.14.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute v0.6.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork v0.4.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources v0.4.0
 	github.com/GoogleCloudPlatform/cloudsql-proxy v1.30.0
 	github.com/InVisionApp/go-health/v2 v2.1.2
 	github.com/InVisionApp/go-logger v1.0.1
@@ -35,7 +35,7 @@ require (
 	github.com/google/go-cmp v0.5.7
 	github.com/google/go-tpm v0.3.3
 	github.com/google/go-tpm-tools v0.3.6
-	github.com/googleapis/gax-go/v2 v2.2.0
+	github.com/googleapis/gax-go/v2 v2.3.0
 	github.com/gorilla/handlers v1.5.1
 	github.com/hashicorp/go-hclog v1.2.0
 	github.com/hashicorp/go-plugin v1.4.3
@@ -66,7 +66,7 @@ require (
 	golang.org/x/sys v0.0.0-20220403205710-6acee93ad0eb
 	golang.org/x/time v0.0.0-20220224211638-0e9765cccd65
 	google.golang.org/api v0.74.0
-	google.golang.org/genproto v0.0.0-20220405205423-9d709892a2bf
+	google.golang.org/genproto v0.0.0-20220407144326-9054f6ed7bac
 	google.golang.org/grpc v1.45.0
 	google.golang.org/protobuf v1.28.0
 	gopkg.in/square/go-jose.v2 v2.6.0
