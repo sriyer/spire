@@ -500,7 +500,7 @@ func TestConfigureTLSWithCertAuth(t *testing.T) {
 
 	testPool, err := testRootCAs()
 	require.NoError(t, err)
-	require.Equal(t, testPool.Subjects(), tcc.RootCAs.Subjects()) // nolint // these pools are not system pools so the use of Subjects() is ok for now
+	require.True(t, testPool.Equal(tcc.RootCAs))
 }
 
 func TestConfigureTLSWithTokenAuth(t *testing.T) {
@@ -638,9 +638,9 @@ func TestSignIntermediate(t *testing.T) {
 
 	resp, err := client.SignIntermediate(testTTL, csr)
 	require.NoError(t, err)
+	require.NotNil(t, resp.UpstreamCACertPEM)
+	require.NotNil(t, resp.UpstreamCACertChainPEM)
 	require.NotNil(t, resp.CACertPEM)
-	require.NotNil(t, resp.CACertChainPEM)
-	require.NotNil(t, resp.CertPEM)
 }
 
 func TestSignIntermediateErrorFromEndpoint(t *testing.T) {
