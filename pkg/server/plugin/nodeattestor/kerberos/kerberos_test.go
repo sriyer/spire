@@ -44,7 +44,6 @@ func Test_PluginAttest(t *testing.T) {
 	p := &Plugin{Kerberos: mk, keytab: kt, trustDomain: "example.com"}
 
 	t.Run("should attest node", func(t *testing.T) {
-
 		attestedData := &common.KrbAttestedData{}
 		payload, err := json.Marshal(attestedData)
 		assert.Nil(t, err)
@@ -69,7 +68,5 @@ func Test_PluginAttest(t *testing.T) {
 		assert.NotNil(t, err)
 		assert.Empty(t, id)
 		assert.Empty(t, selectors)
-
 	})
-
 }

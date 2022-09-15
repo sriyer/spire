@@ -13,7 +13,6 @@ import (
 	gokrbconfig "gopkg.in/jcmturner/gokrb5.v7/config"
 	gokrbcreds "gopkg.in/jcmturner/gokrb5.v7/credentials"
 	gokrbkeytab "gopkg.in/jcmturner/gokrb5.v7/keytab"
-	
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	nodeattestorv1 "github.com/spiffe/spire-plugin-sdk/proto/spire/plugin/server/nodeattestor/v1"
@@ -47,7 +46,7 @@ func (p *Plugin) SetLogger(log hclog.Logger) {
 }
 
 func (p *Plugin) spiffeID(krbCreds *gokrbcreds.Credentials) (id string, err error) {
-	spiffePath := path.Join("/",common.PluginName, krbCreds.Domain(), krbCreds.DisplayName())
+	spiffePath := path.Join("/", common.PluginName, krbCreds.Domain(), krbCreds.DisplayName())
 	// id := &url.URL{
 	// 	Scheme: defaultSpiffeScheme,
 	// 	Host:   p.trustDomain,
@@ -144,7 +143,5 @@ func (p *Plugin) Configure(ctx context.Context, req *configv1.ConfigureRequest) 
 }
 
 func buildSelectors(principalName string) []string {
-
 	return []string{fmt.Sprintf("pn:%s", principalName)}
-
 }
