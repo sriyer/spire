@@ -44,8 +44,6 @@ func Test_PluginAttest(t *testing.T) {
 	err := kt.Unmarshal(b)
 	assert.Nil(t, err, "Unable to unmarshal test keytab data")
 
-	
-
 	t.Run("should attest node", func(t *testing.T) {
 		mk := &mockKerberos{}
 		p := &Plugin{Kerberos: mk, keytab: kt, trustDomain: "example.com"}
