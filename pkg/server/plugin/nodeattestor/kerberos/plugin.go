@@ -1,14 +1,10 @@
 package kerberos
 
 import (
-	"github.com/spiffe/spire/pkg/common/catalog"
-	common "github.com/spiffe/spire/pkg/common/plugin/kerberos"
 	nodeattestorv1 "github.com/spiffe/spire-plugin-sdk/proto/spire/plugin/server/nodeattestor/v1"
 	configv1 "github.com/spiffe/spire-plugin-sdk/proto/spire/service/common/config/v1"
-
-
-
-
+	"github.com/spiffe/spire/pkg/common/catalog"
+	common "github.com/spiffe/spire/pkg/common/plugin/kerberos"
 )
 
 func BuiltIn() catalog.BuiltIn {
@@ -21,7 +17,6 @@ func builtin(p *Plugin) catalog.BuiltIn {
 		configv1.ConfigServiceServer(p),
 	)
 }
-
 
 func New() *Plugin {
 	return &Plugin{Kerberos: GetKerberosProvider()}

@@ -1,10 +1,10 @@
 package kerberos
 
 import (
-	gokrbservice "gopkg.in/jcmturner/gokrb5.v7/service"
-	gokrbkeytab "gopkg.in/jcmturner/gokrb5.v7/keytab"
 	common "github.com/spiffe/spire/pkg/common/plugin/kerberos"
 	"gopkg.in/jcmturner/gokrb5.v7/credentials"
+	gokrbkeytab "gopkg.in/jcmturner/gokrb5.v7/keytab"
+	gokrbservice "gopkg.in/jcmturner/gokrb5.v7/service"
 )
 
 type Kerberos interface {
@@ -25,7 +25,7 @@ func (k *kerberos) LoadConfig() {
 
 }
 
-func (k *kerberos) LoadKeyTab(){}
+func (k *kerberos) LoadKeyTab() {}
 
 func (k *kerberos) VerifyAPRequest(kt *gokrbkeytab.Keytab, attestedData *common.KrbAttestedData) (bool, *credentials.Credentials, error) {
 	// Verify the AP (Authentication Protocol) request from SPIRE agent
