@@ -103,7 +103,7 @@ func (p *Plugin) attestRequest(req *nodeattestorv1.AttestRequest) (agentID strin
 		err = common.PluginErr.New("Error creating spiffie ID: %v", err)
 		return
 	}
-	selectors = buildSelectors(creds.CName().PrincipalNameString())
+	selectors = buildSelectors(creds.CName().PrincipalNameString(), attestedData.Tags)
 	return agentID, selectors, err
 }
 
@@ -142,6 +142,10 @@ func (p *Plugin) Configure(ctx context.Context, req *configv1.ConfigureRequest) 
 	return &configv1.ConfigureResponse{}, nil
 }
 
-func buildSelectors(principalName string) []string {
-	return []string{fmt.Sprintf("pn:%s", principalName)}
+func buildSelectors(principalName string, tags []string) (selectors []string) {
+	selectors = []string{fmt.Sprintf("pn:%s", principalName)}
+	for _, tag := range tags {
+		selectors = append(selectors, fmt.Sprintf("tag:%s", tag))
+	}
+	return
 }

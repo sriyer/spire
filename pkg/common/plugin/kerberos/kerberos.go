@@ -15,4 +15,5 @@ var (
 
 type KrbAttestedData struct {
 	KrbAPReq messages.APReq
+	Tags     []string
 }
