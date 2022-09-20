@@ -6,12 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	gokrbclient "gopkg.in/jcmturner/gokrb5.v7/client"
 	gokrbconfig "gopkg.in/jcmturner/gokrb5.v7/config"
-	gokrbcrypto "gopkg.in/jcmturner/gokrb5.v7/crypto"
 	gokrbkeytab "gopkg.in/jcmturner/gokrb5.v7/keytab"
 	gokrbmsgs "gopkg.in/jcmturner/gokrb5.v7/messages"
-	gokrbtypes "gopkg.in/jcmturner/gokrb5.v7/types"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/hcl"
@@ -63,46 +60,59 @@ func (p *Plugin) SetLogger(log hclog.Logger) {
 	p.log = log
 }
 
-func (p *Plugin) AidAttestation(stream nodeattestorv1.NodeAttestor_AidAttestationServer) (err error) {
-	client := gokrbclient.NewClientWithKeytab(p.username, p.realm, p.keytab, p.krbConfig)
-	defer client.Destroy()
-
+func (p *Plugin) Attest(kerberos Kerberos) (apRequest gokrbmsgs.APReq, err error) {
 	// Step 1: Log into the KDC and fetch TGT (Ticket-Granting Ticket) from KDC AS (Authentication Service)
-	if err := client.Login(); err != nil {
-		return common.PluginErr.New("[AS_REQ] logging in: %v", err)
+	if err = kerberos.Login(); err != nil {
+		err = common.PluginErr.New("[AS_REQ] logging in: %v", err)
+		return
 	}
 
 	// Step 2: Use the TGT to fetch Service Ticket of SPIRE server from KDC TGS (Ticket-Granting Service)
-	serviceTkt, encryptionKey, err := client.GetServiceTicket(p.spn)
+	serviceTkt, encryptionKey, err := kerberos.GetServiceTicket(p.spn)
 	if err != nil {
-		return common.PluginErr.New("[TGS_REQ] requesting service ticket: %v", err)
+		err = common.PluginErr.New("[TGS_REQ] requesting service ticket: %v", err)
+		return
 	}
 
 	// Step 3: Create an authenticator including client's info and timestamp
-	authenticator, err := gokrbtypes.NewAuthenticator(client.Credentials.Domain(), client.Credentials.CName())
+	authenticator, err := kerberos.GetAuthenitcator(kerberos.GetCredentialDomain(), kerberos.GetCredentialCName())
 	if err != nil {
-		return common.PluginErr.New("[KRB_AP_REQ] building Kerberos authenticator: %v", err)
+		err = common.PluginErr.New("[KRB_AP_REQ] building Kerberos authenticator: %v", err)
+		return
 	}
 
-	encryptionType, err := gokrbcrypto.GetEtype(encryptionKey.KeyType)
+	encryptionType, err := kerberos.GetEncryptionType(encryptionKey.KeyType)
 	if err != nil {
-		return common.PluginErr.New("[KRB_AP_REQ] getting encryption key type: %v", err)
+		err = common.PluginErr.New("[KRB_AP_REQ] getting encryption key type: %v", err)
+		return
 	}
 
-	err = authenticator.GenerateSeqNumberAndSubKey(encryptionType.GetETypeID(), encryptionType.GetKeyByteSize())
+	err = kerberos.GetSequenceNumberAndSubKey(authenticator, encryptionType)
 	if err != nil {
-		return common.PluginErr.New("[KRB_AP_REQ] generating authenticator sequence number and subkey: %v", err)
+		err = common.PluginErr.New("[KRB_AP_REQ] generating authenticator sequence number and subkey: %v", err)
+		return
 	}
 
 	// Step 4: Create an AP (Authentication Protocol) request which will be decrypted by SPIRE server's kerberos
 	// attestor
-	krbAPReq, err := gokrbmsgs.NewAPReq(serviceTkt, encryptionKey, authenticator)
+	apRequest, err = kerberos.APRequest(serviceTkt, encryptionKey, authenticator)
+	if err != nil {
+		err = common.PluginErr.New("[KRB_AP_REQ] building KRB_AP_REQ: %v", err)
+		return
+	}
+	return apRequest, err
+}
+
+func (p *Plugin) AidAttestation(stream nodeattestorv1.NodeAttestor_AidAttestationServer) (err error) {
+	krb := GetKerberosWithKeytab(p.username, p.realm, p.keytab, p.krbConfig)
+	defer krb.Destroy()
+
+	req, err := p.Attest(krb)
 	if err != nil {
 		return common.PluginErr.New("[KRB_AP_REQ] building KRB_AP_REQ: %v", err)
 	}
-
 	attestedData := common.KrbAttestedData{
-		KrbAPReq: krbAPReq,
+		KrbAPReq: req,
 	}
 
 	data, err := json.Marshal(attestedData)
@@ -122,6 +132,66 @@ func (p *Plugin) AidAttestation(stream nodeattestorv1.NodeAttestor_AidAttestatio
 
 	return nil
 }
+
+// func (p *Plugin) AidOldAttestation(stream nodeattestorv1.NodeAttestor_AidAttestationServer) (err error) {
+// 	client := gokrbclient.NewClientWithKeytab(p.username, p.realm, p.keytab, p.krbConfig)
+// 	defer client.Destroy()
+
+// 	// Step 1: Log into the KDC and fetch TGT (Ticket-Granting Ticket) from KDC AS (Authentication Service)
+// 	if err := client.Login(); err != nil {
+// 		return common.PluginErr.New("[AS_REQ] logging in: %v", err)
+// 	}
+
+// 	// Step 2: Use the TGT to fetch Service Ticket of SPIRE server from KDC TGS (Ticket-Granting Service)
+// 	serviceTkt, encryptionKey, err := client.GetServiceTicket(p.spn)
+// 	if err != nil {
+// 		return common.PluginErr.New("[TGS_REQ] requesting service ticket: %v", err)
+// 	}
+
+// 	// Step 3: Create an authenticator including client's info and timestamp
+// 	authenticator, err := gokrbtypes.NewAuthenticator(client.Credentials.Domain(), client.Credentials.CName())
+// 	if err != nil {
+// 		return common.PluginErr.New("[KRB_AP_REQ] building Kerberos authenticator: %v", err)
+// 	}
+
+// 	encryptionType, err := gokrbcrypto.GetEtype(encryptionKey.KeyType)
+// 	if err != nil {
+// 		return common.PluginErr.New("[KRB_AP_REQ] getting encryption key type: %v", err)
+// 	}
+
+// 	err = authenticator.GenerateSeqNumberAndSubKey(encryptionType.GetETypeID(), encryptionType.GetKeyByteSize())
+// 	if err != nil {
+// 		return common.PluginErr.New("[KRB_AP_REQ] generating authenticator sequence number and subkey: %v", err)
+// 	}
+
+// 	// Step 4: Create an AP (Authentication Protocol) request which will be decrypted by SPIRE server's kerberos
+// 	// attestor
+// 	krbAPReq, err := gokrbmsgs.NewAPReq(serviceTkt, encryptionKey, authenticator)
+// 	if err != nil {
+// 		return common.PluginErr.New("[KRB_AP_REQ] building KRB_AP_REQ: %v", err)
+// 	}
+
+// 	attestedData := common.KrbAttestedData{
+// 		KrbAPReq: krbAPReq,
+// 	}
+
+// 	data, err := json.Marshal(attestedData)
+// 	if err != nil {
+// 		return common.PluginErr.New("marshaling KRB_AP_REQ for transport: %v", err)
+// 	}
+
+// 	resp := &nodeattestorv1.PayloadOrChallengeResponse{
+// 		Data: &nodeattestorv1.PayloadOrChallengeResponse_Payload{
+// 			Payload: data,
+// 		},
+// 	}
+
+// 	if err := stream.Send(resp); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
 
 func (p *Plugin) Configure(ctx context.Context, req *configv1.ConfigureRequest) (*configv1.ConfigureResponse, error) {
 	config := new(Config)
