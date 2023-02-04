@@ -104,7 +104,7 @@ func (p *Plugin) Attest(kerberos Kerberos) (apRequest gokrbmsgs.APReq, err error
 }
 
 func (p *Plugin) AidAttestation(stream nodeattestorv1.NodeAttestor_AidAttestationServer) (err error) {
-	krb := GetKerberosWithKeytab(p.username, p.realm, p.keytab, p.krbConfig)
+	krb := GetWithKeytab(p.username, p.realm, p.keytab, p.krbConfig)
 	defer krb.Destroy()
 
 	req, err := p.Attest(krb)

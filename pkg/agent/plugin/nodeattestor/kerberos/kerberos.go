@@ -22,7 +22,7 @@ type Kerberos interface {
 	GetCredentialCName() gokrbtypes.PrincipalName
 }
 
-func GetKerberosWithKeytab(username, realm string, kt *gokrbkeytab.Keytab, krb5conf *gokrbconfig.Config, settings ...func(*gokrbclient.Settings)) Kerberos {
+func GetWithKeytab(username, realm string, kt *gokrbkeytab.Keytab, krb5conf *gokrbconfig.Config, settings ...func(*gokrbclient.Settings)) Kerberos {
 	client := gokrbclient.NewClientWithKeytab(username, realm, kt, krb5conf)
 	return &kerberos{client: client}
 }

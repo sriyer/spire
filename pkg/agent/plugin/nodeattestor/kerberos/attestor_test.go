@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	gokrbcrypto "gopkg.in/jcmturner/gokrb5.v7/crypto"
 	"gopkg.in/jcmturner/gokrb5.v7/iana/etypeID"
 	gokrbmsgs "gopkg.in/jcmturner/gokrb5.v7/messages"
@@ -51,6 +52,7 @@ func TestPlugin_Attest(t *testing.T) {
 		t.Log(err)
 		assert.NotNil(t, err)
 		assert.Empty(t, req)
+		mk.AssertNotCalled(t, "GetServiceTikcet", "testing")
 	})
 
 	t.Run("should fail getting service ticket", func(t *testing.T) {
@@ -59,6 +61,98 @@ func TestPlugin_Attest(t *testing.T) {
 		mk.On("Login").Return(nil)
 		mk.On("GetServiceTicket", "testing").Return(nil, nil, fmt.Errorf("error getting service ticket"))
 
+		plugin := &Plugin{
+			spn: "testing",
+		}
+		req, err := plugin.Attest(mk)
+		t.Log(err)
+		assert.NotNil(t, err)
+		assert.Empty(t, req)
+		mk.AssertCalled(t, "GetServiceTicket", "testing")
+		mk.AssertNotCalled(t, "GetAuthenitcator","testing", mock.Anything)
+	})
+
+	t.Run("Should fail creating an authenticator", func(t *testing.T) {
+		mk := &mockKerberos{}
+		pn := gokrbtypes.NewPrincipalName(1, "testing")
+		mk.On("Login").Return(nil)
+		mk.On("GetServiceTicket", "testing").Return(nil, nil, nil)
+		mk.On("GetCredentialDomain").Return("testing")
+		mk.On("GetCredentialCName").Return(pn)
+		mk.On("GetAuthenitcator", "testing", pn).Return(nil, fmt.Errorf("error getting authenticator"))
+
+		plugin := &Plugin{
+			spn: "testing",
+		}
+		req, err := plugin.Attest(mk)
+		t.Log(err)
+		assert.NotNil(t, err)
+		assert.Empty(t, req)
+	})
+
+	t.Run("should fail getting encryption type", func(t *testing.T) {
+		mk := &mockKerberos{}
+		pn := gokrbtypes.NewPrincipalName(1, "testing")
+		autht, err := gokrbtypes.NewAuthenticator("testing", pn)
+		assert.Nil(t, err)
+		mk.On("Login").Return(nil)
+		mk.On("GetServiceTicket", "testing").Return(nil, gokrbtypes.EncryptionKey{1, []byte{}}, nil)
+		mk.On("GetCredentialDomain").Return("testing")
+		mk.On("GetCredentialCName").Return(pn)
+		mk.On("GetAuthenitcator", "testing", pn).Return(autht, nil)
+		mk.On("GetEncryptionType", int32(1)).Return(nil, fmt.Errorf("error getting encryption type"))
+
+		plugin := &Plugin{
+			spn: "testing",
+		}
+		req, err := plugin.Attest(mk)
+		t.Log(err)
+		assert.NotNil(t, err)
+		assert.Empty(t, req)
+	})
+
+	t.Run("should fail getting seq number and subkey", func(t *testing.T) {
+		mk := &mockKerberos{}
+		pn := gokrbtypes.NewPrincipalName(1, "testing")
+		autht, err := gokrbtypes.NewAuthenticator("testing", pn)
+		eType := gokrbcrypto.Aes128CtsHmacSha96{}
+		encyrptionKey := gokrbtypes.EncryptionKey{KeyType: etypeID.AES128_CTS_HMAC_SHA1_96}
+		realm := "testing"
+		ticket := gokrbmsgs.Ticket{Realm: realm}
+		assert.Nil(t, err)
+		mk.On("Login").Return(nil)
+		mk.On("GetServiceTicket", "testing").Return(ticket, encyrptionKey, nil)
+		mk.On("GetCredentialDomain").Return("testing")
+		mk.On("GetCredentialCName").Return(pn)
+		mk.On("GetAuthenitcator", "testing", pn).Return(autht, nil)
+		mk.On("GetEncryptionType", etypeID.AES128_CTS_HMAC_SHA1_96).Return(eType, nil)
+		mk.On("GetSequenceNumberAndSubKey", autht, eType).Return(fmt.Errorf("error getting seq number and sub key"))
+		plugin := &Plugin{
+			spn: "testing",
+		}
+		req, err := plugin.Attest(mk)
+		t.Log(err)
+		assert.NotNil(t, err)
+		assert.Empty(t, req)
+	})
+
+	t.Run("should fail apRequest", func(t *testing.T) {
+		mk := &mockKerberos{}
+		pn := gokrbtypes.NewPrincipalName(1, "testing")
+		autht, err := gokrbtypes.NewAuthenticator("testing", pn)
+		eType := gokrbcrypto.Aes128CtsHmacSha96{}
+		encyrptionKey := gokrbtypes.EncryptionKey{KeyType: etypeID.AES128_CTS_HMAC_SHA1_96}
+		realm := "testing"
+		ticket := gokrbmsgs.Ticket{Realm: realm}
+		assert.Nil(t, err)
+		mk.On("Login").Return(nil)
+		mk.On("GetServiceTicket", "testing").Return(ticket, encyrptionKey, nil)
+		mk.On("GetCredentialDomain").Return("testing")
+		mk.On("GetCredentialCName").Return(pn)
+		mk.On("GetAuthenitcator", "testing", pn).Return(autht, nil)
+		mk.On("GetEncryptionType", etypeID.AES128_CTS_HMAC_SHA1_96).Return(eType, nil)
+		mk.On("GetSequenceNumberAndSubKey", autht, eType).Return(nil)
+		mk.On("APRequest", ticket, encyrptionKey, autht).Return(nil, fmt.Errorf("error creating AP Request"))
 		plugin := &Plugin{
 			spn: "testing",
 		}
