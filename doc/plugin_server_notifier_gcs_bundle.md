@@ -8,11 +8,11 @@ The certificates in the object can be used to bootstrap SPIRE agents.
 
 The plugin accepts the following configuration options:
 
-| Configuration          | Description                                  | Default         |
-| ---------------------- | -------------------------------------------- | --------------- |
-| `bucket`               | The bucket containing the object             |                 |
-| `object_path`          | The path to the object within the bucket     |                 |
-| `service_account_file` | Path to the service account credentials file |                 |
+| Configuration          | Description                                  | Default |
+|------------------------|----------------------------------------------|---------|
+| `bucket`               | The bucket containing the object             |         |
+| `object_path`          | The path to the object within the bucket     |         |
+| `service_account_file` | Path to the service account credentials file |         |
 
 ## Authenticating with Google Cloud Storage
 
@@ -30,7 +30,7 @@ The following configuration uploads bundle contents to the `spire-bundle.pem`
 object in the `my-bucket` bucket. The bundle is uploaded using Application
 Default Credentials available in the environment SPIRE server is running in.
 
-```
+```hcl
     Notifier "gcs_bundle" {
         plugin_data {
             bucket = "my-bucket"
@@ -45,7 +45,7 @@ The following configuration uploads bundle contents to the `spire-bundle.pem`
 object in the `my-bucket` bucket. The bundle is uploaded using Service Account
 credentials found in the `/path/to/service/account/file` file.
 
-```
+```hcl
     Notifier "gcs_bundle" {
         plugin_data {
             bucket = "my-bucket"

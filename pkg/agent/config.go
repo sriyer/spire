@@ -43,7 +43,7 @@ type Config struct {
 	HealthChecks health.Config
 
 	// Configurations for agent plugins
-	PluginConfigs catalog.HCLPluginConfigMap
+	PluginConfigs catalog.PluginConfigs
 
 	Log logrus.FieldLogger
 
@@ -58,6 +58,9 @@ type Config struct {
 
 	// SyncInterval controls how often the agent sync synchronizer waits
 	SyncInterval time.Duration
+
+	// X509SVIDCacheMaxSize is a soft limit of max number of SVIDs that would be stored in cache
+	X509SVIDCacheMaxSize int
 
 	// Trust domain and associated CA bundle
 	TrustDomain spiffeid.TrustDomain

@@ -26,13 +26,11 @@ import (
 	"github.com/spiffe/spire/proto/spire/common"
 	"github.com/spiffe/spire/test/clock"
 	"github.com/spiffe/spire/test/fakes/fakedatastore"
-	"github.com/spiffe/spire/test/fakes/fakenoderesolver"
 	"github.com/spiffe/spire/test/fakes/fakeserverca"
 	"github.com/spiffe/spire/test/fakes/fakeservercatalog"
 	"github.com/spiffe/spire/test/fakes/fakeservernodeattestor"
 	"github.com/spiffe/spire/test/spiretest"
 	"github.com/spiffe/spire/test/testkey"
-	"github.com/spiffe/spire/test/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -51,6 +49,7 @@ var (
 	ctx     = context.Background()
 	td      = spiffeid.RequireTrustDomainFromString("example.org")
 	agentID = spiffeid.RequireFromPath(td, "/agent")
+	testKey = testkey.MustEC256()
 
 	testNodes = map[string]*common.AttestedNode{
 		agent1: {
@@ -1598,7 +1597,6 @@ func TestGetAgent(t *testing.T) {
 }
 
 func TestRenewAgent(t *testing.T) {
-	testKey := testkey.MustEC256()
 	agentIDType := &types.SPIFFEID{TrustDomain: "example.org", Path: "/agent"}
 
 	defaultNode := &common.AttestedNode{
@@ -2138,11 +2136,7 @@ func TestCreateJoinTokenWithAgentId(t *testing.T) {
 }
 
 func TestAttestAgent(t *testing.T) {
-	util.SkipFlakyTestUnderRaceDetectorWithFiledIssue(
-		t,
-		"https://github.com/spiffe/spire/issues/2841",
-	)
-	testCsr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, testkey.MustEC256())
+	testCsr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, testKey)
 	require.NoError(t, err)
 
 	_, expectedCsrErr := x509.ParseCertificateRequest([]byte("not a csr"))
@@ -2491,7 +2485,6 @@ func TestAttestAgent(t *testing.T) {
 			request:    getAttestAgentRequest("test_type", []byte("payload_with_result"), testCsr),
 			expectedID: spiffeid.RequireFromPath(td, "/spire/agent/test_type/id_with_result"),
 			expectedSelectors: []*common.Selector{
-				{Type: "test_type", Value: "resolved"},
 				{Type: "test_type", Value: "result"},
 			},
 			expectLogs: []spiretest.LogEntry{
@@ -2523,7 +2516,6 @@ func TestAttestAgent(t *testing.T) {
 			request:    getAttestAgentRequest("test_type", []byte("payload_with_result"), testCsr),
 			expectedID: spiffeid.RequireFromPath(td, "/spire/agent/test_type/id_with_result"),
 			expectedSelectors: []*common.Selector{
-				{Type: "test_type", Value: "resolved"},
 				{Type: "test_type", Value: "result"},
 			},
 			expectLogs: []spiretest.LogEntry{
@@ -2555,7 +2547,6 @@ func TestAttestAgent(t *testing.T) {
 			expectedID: spiffeid.RequireFromPath(td, "/spire/agent/test_type/id_with_challenge"),
 			expectedSelectors: []*common.Selector{
 				{Type: "test_type", Value: "challenge"},
-				{Type: "test_type", Value: "resolved_too"},
 			},
 			expectLogs: []spiretest.LogEntry{
 				{
@@ -3002,13 +2993,33 @@ func TestAttestAgent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// setup
 			test := setupServiceTest(t, 0)
-			defer test.Cleanup()
+			defer func() {
+				// Since this is a bidirectional streaming API, it's possible
+				// that the server is still emitting auditing logs even though
+				// we've received the last response from the server. In order
+				// to avoid racing on the log hook, clean up the test (to make
+				// sure the server has shut down) before checking for log
+				// entries.
+				test.Cleanup()
+
+				// Scrub out client address before comparing logs.
+				for _, e := range test.logHook.AllEntries() {
+					if _, ok := e.Data[telemetry.Address]; ok {
+						e.Data[telemetry.Address] = ""
+					}
+				}
+				if tt.retry {
+					// Prevent cases where audit logs from previous calls are pushed after log is reset
+					spiretest.AssertLastLogs(t, test.logHook.AllEntries(), tt.expectLogs)
+				} else {
+					spiretest.AssertLogs(t, test.logHook.AllEntries(), tt.expectLogs)
+				}
+			}()
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
 			test.setupAttestor(t)
-			test.setupResolver(t)
 			test.setupJoinTokens(ctx, t)
 			test.setupNodes(ctx, t)
 
@@ -3045,18 +3056,10 @@ func TestAttestAgent(t *testing.T) {
 			case tt.expectCode != codes.OK:
 				require.Nil(t, result)
 			default:
-				// Clean address on logs
-				for _, e := range test.logHook.AllEntries() {
-					if _, ok := e.Data[telemetry.Address]; ok {
-						e.Data[telemetry.Address] = ""
-					}
-				}
-
 				require.NotNil(t, result)
 				test.assertAttestAgentResult(t, tt.expectedID, result)
 				test.assertAgentWasStored(t, tt.expectedID.String(), tt.expectedSelectors)
 			}
-			spiretest.AssertLogs(t, test.logHook.AllEntries(), tt.expectLogs)
 		})
 	}
 }
@@ -3155,7 +3158,7 @@ func (s *serviceTest) setupAttestor(t *testing.T) {
 			"spiffe://example.org/spire/agent/test_type/id_attested_before": {"attested_before"},
 			"spiffe://example.org/spire/agent/test_type/id_with_challenge":  {"challenge"},
 			"spiffe://example.org/spire/agent/test_type/id_banned":          {"banned"},
-			"spiffe://example.org/spire/agent/test_type/id_selector_dups":   {"A", "B", "C"},
+			"spiffe://example.org/spire/agent/test_type/id_selector_dups":   {"A", "B", "C", "A", "D"},
 		},
 		Challenges: map[string][]string{
 			"id_with_challenge": {"challenge_response"},
@@ -3164,17 +3167,6 @@ func (s *serviceTest) setupAttestor(t *testing.T) {
 
 	fakeNodeAttestor := fakeservernodeattestor.New(t, "test_type", attestorConfig)
 	s.cat.SetNodeAttestor(fakeNodeAttestor)
-}
-
-func (s *serviceTest) setupResolver(t *testing.T) {
-	selectors := map[string][]string{
-		spiffeid.RequireFromPath(td, "/spire/agent/test_type/id_with_result").String():    {"resolved"},
-		spiffeid.RequireFromPath(td, "/spire/agent/test_type/id_with_challenge").String(): {"resolved_too"},
-		spiffeid.RequireFromPath(td, "/spire/agent/test_type/id_selector_dups").String():  {"D", "C", "B"},
-	}
-
-	fakeNodeResolver := fakenoderesolver.New(t, "test_type", selectors)
-	s.cat.SetNodeResolver(fakeNodeResolver)
 }
 
 func (s *serviceTest) setupNodes(ctx context.Context, t *testing.T) {

@@ -5,16 +5,16 @@ disk.
 
 The plugin accepts the following configuration options:
 
-| Configuration  | Description                           |
-| -------------- | ------------------------------------- |
-| keys_path      | Path to the keys file on disk         |
+| Configuration | Description                   |
+|---------------|-------------------------------|
+| keys_path     | Path to the keys file on disk |
 
 A sample configuration:
 
-```
-	KeyManager "disk" {
-		plugin_data = {
-			keys_path = "/opt/spire/data/server/keys.json"
-		}
-	}
+```hcl
+    KeyManager "disk" {
+        plugin_data = {
+            keys_path = "/opt/spire/data/server/keys.json"
+        }
+    }
 ```

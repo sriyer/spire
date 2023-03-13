@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"sort"
@@ -200,16 +201,8 @@ func (c *Cache) FetchWorkloadUpdate(selectors []*common.Selector) *WorkloadUpdat
 	return c.buildWorkloadUpdate(set)
 }
 
-func (c *Cache) SubscribeToWorkloadUpdates(selectors []*common.Selector) Subscriber {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	sub := newSubscriber(c, selectors)
-	for s := range sub.set {
-		c.addSelectorIndexSub(s, sub)
-	}
-	c.notify(sub)
-	return sub
+func (c *Cache) SubscribeToWorkloadUpdates(ctx context.Context, selectors Selectors) (Subscriber, error) {
+	return c.subscribeToWorkloadUpdates(selectors), nil
 }
 
 // UpdateEntries updates the cache with the provided registration entries and bundles and
@@ -444,6 +437,55 @@ func (c *Cache) GetStaleEntries() []*StaleEntry {
 	}
 
 	return staleEntries
+}
+
+func (c *Cache) MatchingRegistrationEntries(selectors []*common.Selector) []*common.RegistrationEntry {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	set, setDone := allocSelectorSet(selectors...)
+	defer setDone()
+
+	records, recordsDone := c.getRecordsForSelectors(set)
+	defer recordsDone()
+
+	// Return identities in ascending "entry id" order to maintain a consistent
+	// ordering.
+	// TODO: figure out how to determine the "default" identity
+	out := make([]*common.RegistrationEntry, 0, len(records))
+	for record := range records {
+		out = append(out, record.entry)
+	}
+	sortEntriesByID(out)
+	return out
+}
+
+func (c *Cache) Entries() []*common.RegistrationEntry {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	out := make([]*common.RegistrationEntry, 0, len(c.records))
+	for _, record := range c.records {
+		out = append(out, record.entry)
+	}
+	sortEntriesByID(out)
+	return out
+}
+
+func (c *Cache) SyncSVIDsWithSubscribers() {
+	c.log.Error("SyncSVIDsWithSubscribers method is not implemented")
+}
+
+func (c *Cache) subscribeToWorkloadUpdates(selectors []*common.Selector) Subscriber {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	sub := newSubscriber(c, selectors)
+	for s := range sub.set {
+		c.addSelectorIndexSub(s, sub)
+	}
+	c.notify(sub)
+	return sub
 }
 
 func (c *Cache) updateOrCreateRecord(newEntry *common.RegistrationEntry) (*cacheRecord, *common.RegistrationEntry) {

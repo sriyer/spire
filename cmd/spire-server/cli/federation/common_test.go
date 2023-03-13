@@ -103,6 +103,8 @@ const (
 }`
 )
 
+var availableFormats = []string{"pretty", "json"}
+
 type cmdTest struct {
 	stdin  *bytes.Buffer
 	stdout *bytes.Buffer
@@ -239,7 +241,7 @@ func createBundle(t *testing.T, trustDomain string) (*types.Bundle, string) {
 	td := spiffeid.RequireTrustDomainFromString(trustDomain)
 	bundlePath := path.Join(t.TempDir(), "bundle.pem")
 	ca := fakeserverca.New(t, td, &fakeserverca.Options{})
-	require.NoError(t, pemutil.SaveCertificates(bundlePath, ca.Bundle(), 0600))
+	require.NoError(t, os.WriteFile(bundlePath, pemutil.EncodeCertificates(ca.Bundle()), 0600))
 
 	return &types.Bundle{
 		TrustDomain: td.String(),
@@ -259,4 +261,17 @@ func createJSONDataFile(t *testing.T, data string) string {
 	jsonDataFilePath := path.Join(t.TempDir(), "bundle.pem")
 	require.NoError(t, os.WriteFile(jsonDataFilePath, []byte(data), 0600))
 	return jsonDataFilePath
+}
+
+func requireOutputBasedOnFormat(t *testing.T, format, stdoutString string, expectedStdoutPretty, expectedStdoutJSON string) {
+	switch format {
+	case "pretty":
+		require.Contains(t, stdoutString, expectedStdoutPretty)
+	case "json":
+		if expectedStdoutJSON != "" {
+			require.JSONEq(t, expectedStdoutJSON, stdoutString)
+		} else {
+			require.Empty(t, stdoutString)
+		}
+	}
 }

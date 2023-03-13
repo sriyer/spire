@@ -4,16 +4,16 @@ The `disk` plugin generates a key pair for the agent's identity, storing the pri
 on disk. If the agent is restarted, the key will be loaded from disk. If the agent is unavailable
 for long enough for its certificate to expire, attestation will need to be re-performed.
 
-| Configuration | Description |
-| ------------- | ----------- |
+| Configuration | Description                                      |
+|---------------|--------------------------------------------------|
 | directory     | The directory in which to store the private key. |
 
 A sample configuration:
 
-```
-	KeyManager "disk" {
-		plugin_data {
-			directory = "/opt/spire/data/agent"
-		}
-	}
+```hcl
+    KeyManager "disk" {
+        plugin_data = {
+            keys_path = "/opt/spire/data/server/keys.json"
+        }
+    }
 ```

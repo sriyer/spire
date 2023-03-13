@@ -10,22 +10,22 @@ you should instead consider using the `k8s_psat` attestor due to the [security c
 
 The server-side `k8s_sat` plugin generates a one-time UUID and generates a SPIFFE ID with the form:
 
-```
-spiffe://<trust domain>/spire/agent/k8s_sat/<cluster>/<UUID>
+```xml
+spiffe://<trust_domain>/spire/agent/k8s_sat/<cluster>/<UUID>
 ```
 
 The main configuration accepts the following values:
 
-| Configuration   | Description | Default                 |
-| --------------- | ----------- | ----------------------- |
-| `cluster`       | Name of the cluster. It must correspond to a cluster configured in the server plugin. |
-| `token_path`      | Path to the service account token on disk | "/var/run/secrets/kubernetes.io/serviceaccount/token" |
+| Configuration | Description                                                                           | Default                                               |
+|---------------|---------------------------------------------------------------------------------------|-------------------------------------------------------|
+| `cluster`     | Name of the cluster. It must correspond to a cluster configured in the server plugin. |
+| `token_path`  | Path to the service account token on disk                                             | "/var/run/secrets/kubernetes.io/serviceaccount/token" |
 
-The token path defaults to the default location kubernetes uses to place the token and should not need to be overridden in most cases.
+The token path defaults to the default location Kubernetes uses to place the token and should not need to be overridden in most cases.
 
 A sample configuration with the default token path:
 
-```
+```hcl
     NodeAttestor "k8s_sat" {
         plugin_data {
             cluster = "MyCluster"

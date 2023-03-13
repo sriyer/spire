@@ -1,5 +1,7 @@
 # SPIRE Kubernetes Workload Registrar
 
+**The SPIRE Kubernetes Workload Registrar is deprecated and no longer maintained. Please migrate to the [SPIRE Controller Manager](https://github.com/spiffe/spire-controller-manager).**
+
 The SPIRE Kubernetes Workload Registrar implements a Kubernetes
 ValidatingAdmissionWebhook that facilitates automatic workload registration
 within Kubernetes.
@@ -10,46 +12,45 @@ within Kubernetes.
 
 The registrar has the following command line flags:
 
-| Flag         | Description                                                      | Default                       |
-| ------------ | -----------------------------------------------------------------| ----------------------------- |
-| `-config`    | Path on disk to the [HCL Configuration](#hcl-configuration) file | `k8s-workload-registrar.conf` |
-
+| Flag      | Description                                                      | Default                       |
+|-----------|------------------------------------------------------------------|-------------------------------|
+| `-config` | Path on disk to the [HCL Configuration](#hcl-configuration) file | `k8s-workload-registrar.conf` |
 
 ### HCL Configuration
 
 The configuration file is a **required** by the registrar. It contains
 [HCL](https://github.com/hashicorp/hcl) encoded configurables.
 
-| Key                        | Type     | Required? | Description                              | Default |
-| -------------------------- | ---------| ---------| ----------------------------------------- | ------- |
-| `log_level`                | string   | required | Log level (one of `"panic"`,`"fatal"`,`"error"`,`"warn"`, `"warning"`,`"info"`,`"debug"`,`"trace"`) | `"info"` |
-| `log_path`                 | string   | optional | Path on disk to write the log | |
-| `trust_domain`             | string   | required | Trust domain of the SPIRE server | |
-| `agent_socket_path`        | string   | optional | Path to the Unix domain socket of the SPIRE agent. Required if server_address is not a unix domain socket address. | |
-| `server_address`           | string   | required | Address of the spire server. A local socket can be specified using unix:///path/to/socket. This is not the same as the agent socket. | |
-| `server_socket_path`       | string   | optional | Path to the Unix domain socket of the SPIRE server, equivalent to specifying a server_address with a "unix://..." prefix | |
-| `cluster`                  | string   | required | Logical cluster to register nodes/workloads under. Must match the SPIRE SERVER PSAT node attestor configuration. | |
-| `pod_label`                | string   | optional | The pod label used for [Label Based Workload Registration](#label-based-workload-registration) | |
-| `pod_annotation`           | string   | optional | The pod annotation used for [Annotation Based Workload Registration](#annotation-based-workload-registration) | |
-| `mode`                     | string   | required | How to run the registrar, either `"reconcile"` or `"crd"`. See [Differences](#differences-between-modes) for more details. | |
-| `disabled_namespaces`      | []string | optional | Comma seperated list of namespaces to disable auto SVID generation for | `"kube-system", "kube-public"` |
+| Key                   | Type     | Required? | Description                                                                                                                          | Default                        |
+|-----------------------|----------|-----------|--------------------------------------------------------------------------------------------------------------------------------------|--------------------------------|
+| `log_level`           | string   | required  | Log level (one of `"panic"`,`"fatal"`,`"error"`,`"warn"`, `"warning"`,`"info"`,`"debug"`,`"trace"`)                                  | `"info"`                       |
+| `log_path`            | string   | optional  | Path on disk to write the log                                                                                                        |                                |
+| `trust_domain`        | string   | required  | Trust domain of the SPIRE server                                                                                                     |                                |
+| `agent_socket_path`   | string   | optional  | Path to the Unix domain socket of the SPIRE agent. Required if server_address is not a unix domain socket address.                   |                                |
+| `server_address`      | string   | required  | Address of the spire server. A local socket can be specified using unix:///path/to/socket. This is not the same as the agent socket. |                                |
+| `server_socket_path`  | string   | optional  | Path to the Unix domain socket of the SPIRE server, equivalent to specifying a server_address with a "unix://..." prefix             |                                |
+| `cluster`             | string   | required  | Logical cluster to register nodes/workloads under. Must match the SPIRE SERVER PSAT node attestor configuration.                     |                                |
+| `pod_label`           | string   | optional  | The pod label used for [Label Based Workload Registration](#label-based-workload-registration)                                       |                                |
+| `pod_annotation`      | string   | optional  | The pod annotation used for [Annotation Based Workload Registration](#annotation-based-workload-registration)                        |                                |
+| `mode`                | string   | required  | How to run the registrar, either `"reconcile"` or `"crd"`. See [Differences](#differences-between-modes) for more details.           |                                |
+| `disabled_namespaces` | []string | optional  | Comma separated list of namespaces to disable auto SVID generation for                                                               | `"kube-system", "kube-public"` |
 
 The following configuration directives are specific to `"reconcile"` mode:
 
-| Key                             | Type    | Required? | Description                              | Default |
-| ------------------------------- | --------| ---------| ----------------------------------------- | ------- |
-| `leader_election`               | bool    | optional | Enable/disable leader election. Enable if you have multiple registrar replicas running. | false |
-| `leader_election_resource_lock` | string  | optional | Configures the type of resource to use for the leader election lock. | `"leases"` |
-| `metrics_addr`                  | string  | optional | Address to expose metrics on, use `0` to disable. | `":8080"` |
-| `controller_name`               | string  | optional | Forms part of the spiffe IDs used for parent IDs | `"spire-k8s-registrar"` |
-| `add_pod_dns_names`             | bool    | optional | Enable/disable adding k8s DNS names to pod SVIDs. | false |
-| `cluster_dns_zone`              | string  | optional | The DNS zone used for services in the k8s cluster. | `"cluster.local"` |
+| Key                             | Type   | Required? | Description                                                                             | Default                 |
+|---------------------------------|--------|-----------|-----------------------------------------------------------------------------------------|-------------------------|
+| `leader_election`               | bool   | optional  | Enable/disable leader election. Enable if you have multiple registrar replicas running. | false                   |
+| `leader_election_resource_lock` | string | optional  | Configures the type of resource to use for the leader election lock.                    | `"leases"`              |
+| `metrics_addr`                  | string | optional  | Address to expose metrics on, use `0` to disable.                                       | `":8080"`               |
+| `controller_name`               | string | optional  | Forms part of the spiffe IDs used for parent IDs                                        | `"spire-k8s-registrar"` |
+| `add_pod_dns_names`             | bool   | optional  | Enable/disable adding k8s DNS names to pod SVIDs.                                       | false                   |
+| `cluster_dns_zone`              | string | optional  | The DNS zone used for services in the k8s cluster.                                      | `"cluster.local"`       |
 
 For CRD configuration directives see [CRD Mode Configuration](mode-crd/README.md#configuration)
 
 ### Example
 
-```
+```hcl
 log_level = "debug"
 trust_domain = "domain.test"
 server_socket_path = "/tmp/spire-server/private/api.sock"
@@ -57,13 +58,14 @@ cluster = "production"
 ```
 
 ## Workload Registration
+
 When running in reconcile or crd mode with `pod_controller=true` entries will be automatically created for
 Pods. The available workload registration modes are:
 
-| Registration Mode | pod_label | pod_annotation | identity_template | Service Account Based |
-| ----------------- | --------- | -------------- | ----------------- | --------------- |
-| `reconcile` | as specified by pod_label | as specified by pod_annotation | _unavailable_ | service account |
-| `crd`       | as specified by pod_label | as specified by pod_annotation | as specified by identity_template | _unavailable_ |
+| Registration Mode | pod_label                 | pod_annotation                 | identity_template                 | Service Account Based |
+|-------------------|---------------------------|--------------------------------|-----------------------------------|-----------------------|
+| `reconcile`       | as specified by pod_label | as specified by pod_annotation | _unavailable_                     | service account       |
+| `crd`             | as specified by pod_label | as specified by pod_annotation | as specified by identity_template | _unavailable_         |
 
 If using the `reconcile` mode with [Service Account Based SPIFFE IDs](#service-account-based-workload-registration), don't specify either `pod_label` or `pod_annotation`. If you use Label Based SPIFFE IDs, specify only `pod_label`. If you use Annotation Based SPIFFE IDs, specify only `pod_annotation`.
 
@@ -72,12 +74,11 @@ workload registration mode is selected,
 `identity_template` is used with a default configuration:
 `ns/{{.Pod.Namespace}}/sa/{{.Pod.ServiceAccount}}`
 
-
 It may take several seconds for newly created SVIDs to become available to workloads.
 
 ### Federated Entry Registration
 
-The pod annotatation `spiffe.io/federatesWith` can be used to create SPIFFE ID's that federate with other trust domains.
+The pod annotation `spiffe.io/federatesWith` can be used to create SPIFFE ID's that federate with other trust domains.
 
 To specify multiple trust domains, separate them with commas.
 
@@ -106,7 +107,7 @@ SPIFFE ID of the form
 pod came in with the service account `blog` in the `production` namespace, the
 following registration entry would be created:
 
-```
+```shell
 Entry ID      : 200d8b19-8334-443d-9494-f65d0ad64eb5
 SPIFFE ID     : spiffe://example.org/ns/production/sa/blog
 Parent ID     : ...
@@ -123,7 +124,7 @@ was configured with the `spire-workload` label and a pod came in with
 `spire-workload=example-workload`, the following registration entry would be
 created:
 
-```
+```shell
 Entry ID      : 200d8b19-8334-443d-9494-f65d0ad64eb5
 SPIFFE ID     : spiffe://example.org/example-workload
 Parent ID     : ...
@@ -143,7 +144,7 @@ was configured with the `spiffe.io/spiffe-id` annotation and a pod came in with
 `spiffe.io/spiffe-id: production/example-workload`, the following registration entry would be
 created:
 
-```
+```shell
 Entry ID      : 200d8b19-8334-443d-9494-f65d0ad64eb5
 SPIFFE ID     : spiffe://example.org/production/example-workload
 Parent ID     : ...
@@ -167,11 +168,10 @@ the registrar deployment.
 If it is deployed as a container within the SPIRE server pod then it talks to SPIRE server via a Unix domain socket. It will need access to a
 shared volume containing the socket file.
 
-
 ### Reconcile Mode Configuration
 
 To use reconcile mode you need to create appropriate roles and bind them to the ServiceAccount you intend to run the controller as.
-An example can be found in `mode-reconcile/config/role.yaml`, which you would apply with `kubectl apply -f mode-reconcile/config/role.yaml`
+An example can be found in `mode-reconcile/config/roles.yaml`, which you would apply with `kubectl apply -f mode-reconcile/config/role.yaml`
 
 ### CRD Mode Configuration
 

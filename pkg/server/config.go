@@ -20,7 +20,7 @@ import (
 
 type Config struct {
 	// Configurations for server plugins
-	PluginConfigs common.HCLPluginConfigMap
+	PluginConfigs common.PluginConfigs
 
 	Log logrus.FieldLogger
 
@@ -59,8 +59,11 @@ type Config struct {
 	// AgentTTL is time-to-live for agent SVIDs
 	AgentTTL time.Duration
 
-	// SVIDTTL is default time-to-live for SVIDs
-	SVIDTTL time.Duration
+	// X509SVIDTTL is default time-to-live for X509-SVIDs (overrides SVIDTTL)
+	X509SVIDTTL time.Duration
+
+	// JWTSVIDTTL is default time-to-live for SVIDs (overrides SVIDTTL)
+	JWTSVIDTTL time.Duration
 
 	// CATTL is the time-to-live for the server CA. This only applies to
 	// self-signed CA certificates, otherwise it is up to the upstream CA.
@@ -101,10 +104,6 @@ type Config struct {
 	// AdminIDs are a list of fixed IDs that when presented by a caller in an
 	// X509-SVID, are granted admin rights.
 	AdminIDs []spiffeid.ID
-
-	// OmitX509SVIDUID, if true, omits the X.500 Unique Identifier from being
-	// calculated and added to the Subject DN on X509-SVIDs.
-	OmitX509SVIDUID bool
 }
 
 type ExperimentalConfig struct {

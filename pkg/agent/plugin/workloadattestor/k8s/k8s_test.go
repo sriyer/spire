@@ -56,9 +56,6 @@ FwOGLt+I3+9beT0vo+pn9Rq0squewFYe3aJbwpkyfP2xOovQCdm4PC8y
 `))
 
 	testPodSelectors = []*common.Selector{
-		{Type: "k8s", Value: "container-image:docker-pullable://localhost/spiffe/blog@sha256:0cfdaced91cb46dd7af48309799a3c351e4ca2d5e1ee9737ca0cbd932cb79898"},
-		{Type: "k8s", Value: "container-image:localhost/spiffe/blog:latest"},
-		{Type: "k8s", Value: "container-name:blog"},
 		{Type: "k8s", Value: "node-name:k8s-node-1"},
 		{Type: "k8s", Value: "ns:default"},
 		{Type: "k8s", Value: "pod-image-count:2"},
@@ -75,6 +72,12 @@ FwOGLt+I3+9beT0vo+pn9Rq0squewFYe3aJbwpkyfP2xOovQCdm4PC8y
 		{Type: "k8s", Value: "pod-uid:2c48913c-b29f-11e7-9350-020968147796"},
 		{Type: "k8s", Value: "sa:default"},
 	}
+	testContainerSelectors = []*common.Selector{
+		{Type: "k8s", Value: "container-image:docker-pullable://localhost/spiffe/blog@sha256:0cfdaced91cb46dd7af48309799a3c351e4ca2d5e1ee9737ca0cbd932cb79898"},
+		{Type: "k8s", Value: "container-image:localhost/spiffe/blog:latest"},
+		{Type: "k8s", Value: "container-name:blog"},
+	}
+	testPodAndContainerSelectors = append(testPodSelectors, testContainerSelectors...)
 )
 
 type attestResult struct {
@@ -106,12 +109,11 @@ type Suite struct {
 func (s *Suite) SetupTest() {
 	s.dir = s.TempDir()
 	s.writeFile(defaultTokenPath, "default-token")
-
 	s.clock = clock.NewMock(s.T())
 	s.server = nil
-
 	s.podList = nil
 	s.env = map[string]string{}
+
 	s.oc = createOSConfig()
 }
 
@@ -146,7 +148,7 @@ func (s *Suite) TestAttestWithPidInPodAfterRetry() {
 	select {
 	case result := <-resultCh:
 		s.Require().Nil(result.err)
-		s.requireSelectorsEqual(testPodSelectors, result.selectors)
+		s.requireSelectorsEqual(testPodAndContainerSelectors, result.selectors)
 	case <-time.After(time.Minute):
 		s.FailNow("timed out waiting for attest response")
 	}
@@ -260,6 +262,14 @@ func (s *Suite) TestAttestReachingKubeletViaNodeName() {
 	s.requireAttestSuccessWithPod(s.loadSecurePlugin(`
 		node_name_env = "OVERRIDDEN_NODE_NAME"
 	`))
+}
+
+func (s *Suite) TestAttestWhenContainerReadyButContainerSelectorsDisabled() {
+	s.startInsecureKubelet()
+	p := s.loadInsecurePluginWithExtra("disable_container_selectors = true")
+	s.addPodListResponse(podListFilePath)
+	s.addGetContainerResponsePidInPod()
+	s.requireAttestSuccess(p, testPodSelectors)
 }
 
 func (s *Suite) TestConfigure() {
@@ -552,6 +562,7 @@ func (s *Suite) newPlugin() *Plugin {
 	p.getenv = func(key string) string {
 		return s.env[key]
 	}
+
 	return p
 }
 
@@ -593,7 +604,7 @@ func (s *Suite) loadPlugin(configuration string) workloadattestor.WorkloadAttest
 		plugintest.Configure(configuration),
 	)
 
-	if cHelper := s.oc.getContainerHelper(); cHelper != nil {
+	if cHelper := s.oc.getContainerHelper(p); cHelper != nil {
 		p.setContainerHelper(cHelper)
 	}
 	return v1
@@ -605,6 +616,15 @@ func (s *Suite) loadInsecurePlugin() workloadattestor.WorkloadAttestor {
 		max_poll_attempts = 5
 		poll_retry_interval = "1s"
 `, s.kubeletPort()))
+}
+
+func (s *Suite) loadInsecurePluginWithExtra(extraConfig string) workloadattestor.WorkloadAttestor {
+	return s.loadPlugin(fmt.Sprintf(`
+		kubelet_read_only_port = %d
+		max_poll_attempts = 5
+		poll_retry_interval = "1s"
+		%s
+`, s.kubeletPort(), extraConfig))
 }
 
 func (s *Suite) startInsecureKubelet() {
@@ -746,7 +766,7 @@ func (s *Suite) writeKey(path string, key *ecdsa.PrivateKey) {
 func (s *Suite) requireAttestSuccessWithPod(p workloadattestor.WorkloadAttestor) {
 	s.addPodListResponse(podListFilePath)
 	s.addGetContainerResponsePidInPod()
-	s.requireAttestSuccess(p, testPodSelectors)
+	s.requireAttestSuccess(p, testPodAndContainerSelectors)
 }
 
 func (s *Suite) requireAttestSuccess(p workloadattestor.WorkloadAttestor, expectedSelectors []*common.Selector) {
@@ -762,8 +782,11 @@ func (s *Suite) requireAttestFailure(p workloadattestor.WorkloadAttestor, code c
 }
 
 func (s *Suite) requireSelectorsEqual(expected, actual []*common.Selector) {
-	// assert the selectors (sorting for consistency)
+	// assert the selectors (non-destructively sorting for consistency)
+	actual = append([]*common.Selector(nil), actual...)
+	expected = append([]*common.Selector(nil), expected...)
 	util.SortSelectors(actual)
+	util.SortSelectors(expected)
 	s.RequireProtoListEqual(expected, actual)
 }
 

@@ -3,9 +3,6 @@ package telemetry
 import (
 	"context"
 	"io"
-	"os"
-	"os/signal"
-	"sync"
 	"time"
 
 	"github.com/armon/go-metrics"
@@ -21,8 +18,6 @@ type inmemRunner struct {
 	log        logrus.FieldLogger
 	w          io.Writer
 	loadedSink *metrics.InmemSink
-
-	inMemBlockSet bool
 }
 
 func newInmemRunner(c *MetricsConfig) (sinkRunner, error) {
@@ -30,12 +25,10 @@ func newInmemRunner(c *MetricsConfig) (sinkRunner, error) {
 		log: c.Logger,
 	}
 
-	if c.FileConfig.InMem != nil && c.FileConfig.InMem.Enabled != nil {
-		runner.inMemBlockSet = true
-
-		if !*c.FileConfig.InMem.Enabled {
-			return runner, nil
-		}
+	// Don't enable If the InMem block is not present.
+	inMem := c.FileConfig.InMem
+	if inMem == nil {
+		return runner, nil
 	}
 
 	if logger, ok := c.Logger.(interface{ Writer() *io.PipeWriter }); ok {
@@ -66,45 +59,10 @@ func (i *inmemRunner) run(ctx context.Context) error {
 		return nil
 	}
 
-	var wg sync.WaitGroup
-
-	i.startInMemMetrics(ctx, &wg)
-
-	if !i.inMemBlockSet {
-		i.startConfigWarning(ctx, &wg)
-	}
-
-	wg.Wait()
-	return nil
-}
-
-func (i *inmemRunner) startConfigWarning(ctx context.Context, wg *sync.WaitGroup) {
-	wg.Add(1)
-	sigChannel := make(chan os.Signal, 1)
-	signal.Notify(sigChannel, metrics.DefaultSignal)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-sigChannel:
-				i.log.Warn("The in-memory telemetry sink will be disabled by default in a future release." +
-					" If you wish to continue using it, please enable it in the telemetry configuration")
-			case <-ctx.Done():
-				signal.Stop(sigChannel)
-				return
-			}
-		}
-	}()
-}
-
-func (i *inmemRunner) startInMemMetrics(ctx context.Context, wg *sync.WaitGroup) {
-	wg.Add(1)
 	signalHandler := metrics.NewInmemSignal(i.loadedSink, metrics.DefaultSignal, i.w)
-	go func() {
-		defer wg.Done()
-		<-ctx.Done()
-		signalHandler.Stop()
-	}()
+	defer signalHandler.Stop()
+	<-ctx.Done()
+	return nil
 }
 
 func (i *inmemRunner) requiresTypePrefix() bool {

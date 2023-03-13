@@ -1,7 +1,6 @@
 package run
 
 import (
-	"bytes"
 	"crypto/x509/pkix"
 	"io"
 	"os"
@@ -11,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl"
-	"github.com/hashicorp/hcl/hcl/printer"
+	"github.com/hashicorp/hcl/hcl/ast"
 	"github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -66,39 +65,40 @@ func TestParseConfigGood(t *testing.T) {
 	assert.True(t, c.Server.AuditLogEnabled)
 	testParseConfigGoodOS(t, c)
 
+	// Parse/reprint cycle trims outer whitespace
+	const data = `join_token = "PLUGIN-SERVER-NOT-A-SECRET"`
+
 	// Check for plugins configurations
-	pluginConfigs := *c.Plugins
-	expectedData := "join_token = \"PLUGIN-SERVER-NOT-A-SECRET\""
-	var data bytes.Buffer
-	err = printer.DefaultConfig.Fprint(&data, pluginConfigs["plugin_type_server"]["plugin_name_server"].PluginData)
-	assert.NoError(t, err)
+	expectedPluginConfigs := catalog.PluginConfigs{
+		{
+			Type:     "plugin_type_server",
+			Name:     "plugin_name_server",
+			Path:     "./pluginServerCmd",
+			Checksum: "pluginServerChecksum",
+			Data:     data,
+			Disabled: false,
+		},
+		{
+			Type:     "plugin_type_server",
+			Name:     "plugin_disabled",
+			Path:     "./pluginServerCmd",
+			Checksum: "pluginServerChecksum",
+			Data:     data,
+			Disabled: true,
+		},
+		{
+			Type:     "plugin_type_server",
+			Name:     "plugin_enabled",
+			Path:     "./pluginServerCmd",
+			Checksum: "pluginServerChecksum",
+			Data:     data,
+			Disabled: false,
+		},
+	}
 
-	assert.Len(t, pluginConfigs, 1)
-	assert.Len(t, pluginConfigs["plugin_type_server"], 3)
-
-	// Default config
-	pluginConfig := pluginConfigs["plugin_type_server"]["plugin_name_server"]
-	assert.Nil(t, pluginConfig.Enabled)
-	assert.Equal(t, pluginConfig.IsEnabled(), true)
-	assert.Equal(t, pluginConfig.PluginChecksum, "pluginServerChecksum")
-	assert.Equal(t, pluginConfig.PluginCmd, "./pluginServerCmd")
-	assert.Equal(t, expectedData, data.String())
-
-	// Disabled plugin
-	pluginConfig = pluginConfigs["plugin_type_server"]["plugin_disabled"]
-	assert.NotNil(t, pluginConfig.Enabled)
-	assert.Equal(t, pluginConfig.IsEnabled(), false)
-	assert.Equal(t, pluginConfig.PluginChecksum, "pluginServerChecksum")
-	assert.Equal(t, pluginConfig.PluginCmd, "./pluginServerCmd")
-	assert.Equal(t, expectedData, data.String())
-
-	// Enabled plugin
-	pluginConfig = pluginConfigs["plugin_type_server"]["plugin_enabled"]
-	assert.NotNil(t, pluginConfig.Enabled)
-	assert.Equal(t, pluginConfig.IsEnabled(), true)
-	assert.Equal(t, pluginConfig.PluginChecksum, "pluginServerChecksum")
-	assert.Equal(t, pluginConfig.PluginCmd, "./pluginServerCmd")
-	assert.Equal(t, expectedData, data.String())
+	pluginConfigs, err := catalog.PluginConfigsFromHCLNode(c.Plugins)
+	require.NoError(t, err)
+	require.Equal(t, expectedPluginConfigs, pluginConfigs)
 }
 
 func TestMergeInput(t *testing.T) {
@@ -352,13 +352,23 @@ func TestMergeInput(t *testing.T) {
 			},
 		},
 		{
-			msg: "default_svid_ttl should be configurable by file",
+			msg: "default_x509_svid_ttl should be configurable by file",
 			fileInput: func(c *Config) {
-				c.Server.DefaultSVIDTTL = "1h"
+				c.Server.DefaultX509SVIDTTL = "2h"
 			},
 			cliFlags: []string{},
 			test: func(t *testing.T, c *Config) {
-				require.Equal(t, "1h", c.Server.DefaultSVIDTTL)
+				require.Equal(t, "2h", c.Server.DefaultX509SVIDTTL)
+			},
+		},
+		{
+			msg: "default_jwt_svid_ttl should be configurable by file",
+			fileInput: func(c *Config) {
+				c.Server.DefaultJWTSVIDTTL = "3h"
+			},
+			cliFlags: []string{},
+			test: func(t *testing.T, c *Config) {
+				require.Equal(t, "3h", c.Server.DefaultJWTSVIDTTL)
 			},
 		},
 		{
@@ -458,10 +468,31 @@ func TestNewServerConfig(t *testing.T) {
 			},
 		},
 		{
+			msg: "bind_address with hostname value should be correctly parsed",
+			input: func(c *Config) {
+				c.Server.BindAddress = "localhost"
+				c.Server.BindPort = 1337
+			},
+			test: func(t *testing.T, c *server.Config) {
+				require.Equal(t, "127.0.0.1", c.BindAddress.IP.String())
+			},
+		},
+		{
 			msg:         "invalid bind_address should return an error",
 			expectError: true,
 			input: func(c *Config) {
 				c.Server.BindAddress = "this-is-not-an-ip-address"
+			},
+			test: func(t *testing.T, c *server.Config) {
+				require.Nil(t, c)
+			},
+		},
+		{
+			msg:         "invalid bind_port should return an error",
+			expectError: true,
+			input: func(c *Config) {
+				c.Server.BindAddress = "localhost"
+				c.Server.BindPort = -1337
 			},
 			test: func(t *testing.T, c *server.Config) {
 				require.Nil(t, c)
@@ -593,19 +624,38 @@ func TestNewServerConfig(t *testing.T) {
 			},
 		},
 		{
-			msg: "default_svid_ttl is correctly parsed",
+			msg: "default_x509_svid_ttl is correctly parsed",
 			input: func(c *Config) {
-				c.Server.DefaultSVIDTTL = "1m"
+				c.Server.DefaultX509SVIDTTL = "2m"
 			},
 			test: func(t *testing.T, c *server.Config) {
-				require.Equal(t, time.Minute, c.SVIDTTL)
+				require.Equal(t, 2*time.Minute, c.X509SVIDTTL)
 			},
 		},
 		{
-			msg:         "invalid default_svid_ttl returns an error",
+			msg: "default_jwt_svid_ttl is correctly parsed",
+			input: func(c *Config) {
+				c.Server.DefaultJWTSVIDTTL = "3m"
+			},
+			test: func(t *testing.T, c *server.Config) {
+				require.Equal(t, 3*time.Minute, c.JWTSVIDTTL)
+			},
+		},
+		{
+			msg:         "invalid default_x509_svid_ttl returns an error",
 			expectError: true,
 			input: func(c *Config) {
-				c.Server.DefaultSVIDTTL = "b"
+				c.Server.DefaultX509SVIDTTL = "b"
+			},
+			test: func(t *testing.T, c *server.Config) {
+				require.Nil(t, c)
+			},
+		},
+		{
+			msg:         "invalid default_jwt_svid_ttl returns an error",
+			expectError: true,
+			input: func(c *Config) {
+				c.Server.DefaultJWTSVIDTTL = "b"
 			},
 			test: func(t *testing.T, c *server.Config) {
 				require.Nil(t, c)
@@ -911,56 +961,17 @@ func TestNewServerConfig(t *testing.T) {
 			},
 		},
 		{
-			msg: "admin ID does not belong to the trust domain",
+			msg: "admin ID of foreign trust domain",
 			input: func(c *Config) {
 				c.Server.AdminIDs = []string{
 					"spiffe://otherdomain.test/my/admin",
 				}
 			},
-			expectError: true,
+			expectError: false,
 			test: func(t *testing.T, c *server.Config) {
-				require.Nil(t, c)
-			},
-		},
-		{
-			msg: "omit_x509svid_uid is unset",
-			input: func(c *Config) {
-				c.Server.OmitX509SVIDUID = nil
-			},
-			test: func(t *testing.T, c *server.Config) {
-				require.False(t, c.OmitX509SVIDUID)
-			},
-		},
-		{
-			msg: "omit_x509svid_uid is set to false",
-			input: func(c *Config) {
-				value := false
-				c.Server.OmitX509SVIDUID = &value
-			},
-			logOptions: assertLogsContainEntries([]spiretest.LogEntry{
-				{
-					Level:   logrus.WarnLevel,
-					Message: "The omit_x509svid_uid flag is deprecated and will be removed from a future release",
-				},
-			}),
-			test: func(t *testing.T, c *server.Config) {
-				require.False(t, c.OmitX509SVIDUID)
-			},
-		},
-		{
-			msg: "omit_x509svid_uid is set to true",
-			input: func(c *Config) {
-				value := true
-				c.Server.OmitX509SVIDUID = &value
-			},
-			logOptions: assertLogsContainEntries([]spiretest.LogEntry{
-				{
-					Level:   logrus.WarnLevel,
-					Message: "The omit_x509svid_uid flag is deprecated and will be removed from a future release",
-				},
-			}),
-			test: func(t *testing.T, c *server.Config) {
-				require.True(t, c.OmitX509SVIDUID)
+				require.Equal(t, []spiffeid.ID{
+					spiffeid.RequireFromString("spiffe://otherdomain.test/my/admin"),
+				}, c.AdminIDs)
 			},
 		},
 	}
@@ -999,7 +1010,7 @@ func defaultValidConfig() *Config {
 	c.Server.DataDir = "."
 	c.Server.TrustDomain = "example.org"
 
-	c.Plugins = &catalog.HCLPluginConfigMap{}
+	c.Plugins = &ast.ObjectList{}
 
 	return c
 }
@@ -1361,64 +1372,154 @@ func TestLogOptions(t *testing.T) {
 
 func TestHasCompatibleTTLs(t *testing.T) {
 	cases := []struct {
-		msg               string
-		caTTL             time.Duration
-		svidTTL           time.Duration
-		hasCompatibleTTLs bool
+		msg                      string
+		caTTL                    time.Duration
+		x509SvidTTL              time.Duration
+		jwtSvidTTL               time.Duration
+		hasCompatibleSvidTTL     bool
+		hasCompatibleX509SvidTTL bool
+		hasCompatibleJwtSvidTTL  bool
 	}{
 		{
-			msg:               "Both values are default values",
-			caTTL:             0,
-			svidTTL:           0,
-			hasCompatibleTTLs: true,
+			msg:                      "All values are default values",
+			caTTL:                    0,
+			x509SvidTTL:              0,
+			jwtSvidTTL:               0,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  true,
 		},
 		{
-			msg:               "ca_ttl is large enough for the default SVID TTL",
-			caTTL:             time.Hour * 7,
-			svidTTL:           0,
-			hasCompatibleTTLs: true,
+			msg:                      "ca_ttl is large enough for all default SVID TTL",
+			caTTL:                    time.Hour * 7,
+			x509SvidTTL:              0,
+			jwtSvidTTL:               0,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  true,
 		},
 		{
-			msg:               "ca_ttl is not large enough for the default SVID TTL",
-			caTTL:             time.Minute * 1,
-			svidTTL:           0,
-			hasCompatibleTTLs: false,
+			msg:                      "ca_ttl is not large enough for the default SVID TTL",
+			caTTL:                    time.Minute * 1,
+			x509SvidTTL:              0,
+			jwtSvidTTL:               0,
+			hasCompatibleX509SvidTTL: false,
+			hasCompatibleJwtSvidTTL:  false,
 		},
 		{
-			msg:               "default_svid_ttl is small enough for the default CA TTL",
-			caTTL:             0,
-			svidTTL:           time.Hour * 3,
-			hasCompatibleTTLs: true,
+			msg:                      "default_x509_svid_ttl is small enough for the default CA TTL",
+			caTTL:                    0,
+			x509SvidTTL:              time.Hour * 3,
+			jwtSvidTTL:               0,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  true,
 		},
 		{
-			msg:               "default_svid_ttl is not small enough for the default CA TTL",
-			caTTL:             0,
-			svidTTL:           time.Hour * 24,
-			hasCompatibleTTLs: false,
+			msg:                      "default_x509_svid_ttl is not small enough for the default CA TTL",
+			caTTL:                    0,
+			x509SvidTTL:              time.Hour * 24,
+			jwtSvidTTL:               0,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: false,
+			hasCompatibleJwtSvidTTL:  true,
 		},
 		{
-			msg:               "default_svid_ttl is small enough for the configured CA TTL",
-			caTTL:             time.Hour * 24,
-			svidTTL:           time.Hour * 1,
-			hasCompatibleTTLs: true,
+			msg:                      "default_x509_svid_ttl is small enough for the configured CA TTL",
+			caTTL:                    time.Hour * 24,
+			x509SvidTTL:              time.Hour * 1,
+			jwtSvidTTL:               0,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  true,
 		},
 		{
-			msg:               "default_svid_ttl is not small enough for the configured CA TTL",
-			caTTL:             time.Hour * 24,
-			svidTTL:           time.Hour * 23,
-			hasCompatibleTTLs: false,
+			msg:                      "default_x509_svid_ttl is not small enough for the configured CA TTL",
+			caTTL:                    time.Hour * 24,
+			x509SvidTTL:              time.Hour * 23,
+			jwtSvidTTL:               0,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: false,
+			hasCompatibleJwtSvidTTL:  true,
 		},
 		{
-			msg:               "default_svid_ttl is larger than the configured CA TTL",
-			caTTL:             time.Hour * 24,
-			svidTTL:           time.Hour * 25,
-			hasCompatibleTTLs: false,
+			msg:                      "default_x509_svid_ttl is larger than the configured CA TTL",
+			caTTL:                    time.Hour * 24,
+			x509SvidTTL:              time.Hour * 25,
+			jwtSvidTTL:               0,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: false,
+			hasCompatibleJwtSvidTTL:  true,
 		},
 		{
-			msg:               "default_svid_ttl is small enough for the configured CA TTL but larger than the max",
-			caTTL:             time.Hour * 24 * 7 * 4 * 6, // Six months
-			svidTTL:           time.Hour * 24 * 7 * 2,     // Two weeks
-			hasCompatibleTTLs: false,
+			msg:                      "default_x509_svid_ttl is small enough for the configured CA TTL but larger than the max",
+			caTTL:                    time.Hour * 24 * 7 * 4 * 6, // Six months
+			x509SvidTTL:              time.Hour * 24 * 7 * 2,     // Two weeks,
+			jwtSvidTTL:               0,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: false,
+			hasCompatibleJwtSvidTTL:  true,
+		},
+		{
+			msg:                      "default_jwt_svid_ttl is small enough for the default CA TTL",
+			caTTL:                    0,
+			x509SvidTTL:              0,
+			jwtSvidTTL:               time.Hour * 3,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  true,
+		},
+		{
+			msg:                      "default_jwt_svid_ttl is not small enough for the default CA TTL",
+			caTTL:                    0,
+			x509SvidTTL:              0,
+			jwtSvidTTL:               time.Hour * 24,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  false,
+		},
+		{
+			msg:                      "default_jwt_svid_ttl is small enough for the configured CA TTL",
+			caTTL:                    time.Hour * 24,
+			x509SvidTTL:              0,
+			jwtSvidTTL:               time.Hour * 1,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  true,
+		},
+		{
+			msg:                      "default_jwt_svid_ttl is not small enough for the configured CA TTL",
+			caTTL:                    time.Hour * 24,
+			x509SvidTTL:              0,
+			jwtSvidTTL:               time.Hour * 23,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  false,
+		},
+		{
+			msg:                      "default_jwt_svid_ttl is larger than the configured CA TTL",
+			caTTL:                    time.Hour * 24,
+			x509SvidTTL:              0,
+			jwtSvidTTL:               time.Hour * 25,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  false,
+		},
+		{
+			msg:                      "default_jwt_svid_ttl is small enough for the configured CA TTL but larger than the max",
+			caTTL:                    time.Hour * 24 * 7 * 4 * 6, // Six months
+			x509SvidTTL:              0,
+			jwtSvidTTL:               time.Hour * 24 * 7 * 2, // Two weeks,,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  false,
+		},
+		{
+			msg:                      "all default svid_ttls are small enough for the configured CA TTL",
+			caTTL:                    time.Hour * 24,
+			x509SvidTTL:              time.Hour * 1,
+			jwtSvidTTL:               time.Hour * 1,
+			hasCompatibleSvidTTL:     true,
+			hasCompatibleX509SvidTTL: true,
+			hasCompatibleJwtSvidTTL:  true,
 		},
 	}
 
@@ -1427,12 +1528,16 @@ func TestHasCompatibleTTLs(t *testing.T) {
 		if testCase.caTTL == 0 {
 			testCase.caTTL = ca.DefaultCATTL
 		}
-		if testCase.svidTTL == 0 {
-			testCase.svidTTL = ca.DefaultX509SVIDTTL
+		if testCase.x509SvidTTL == 0 {
+			testCase.x509SvidTTL = ca.DefaultX509SVIDTTL
+		}
+		if testCase.jwtSvidTTL == 0 {
+			testCase.jwtSvidTTL = ca.DefaultJWTSVIDTTL
 		}
 
 		t.Run(testCase.msg, func(t *testing.T) {
-			require.Equal(t, testCase.hasCompatibleTTLs, hasCompatibleTTLs(testCase.caTTL, testCase.svidTTL))
+			require.Equal(t, testCase.hasCompatibleX509SvidTTL, hasCompatibleTTL(testCase.caTTL, testCase.x509SvidTTL))
+			require.Equal(t, testCase.hasCompatibleJwtSvidTTL, hasCompatibleTTL(testCase.caTTL, testCase.jwtSvidTTL))
 		})
 	}
 }
@@ -1477,39 +1582,85 @@ func TestMaxSVIDTTL(t *testing.T) {
 
 func TestMinCATTL(t *testing.T) {
 	for _, v := range []struct {
-		svidTTL time.Duration
-		expect  string
+		x509SVIDTTL time.Duration
+		jwtSVIDTTL  time.Duration
+		expect      string
 	}{
 		{
-			svidTTL: 10 * time.Second,
-			expect:  "1m",
+			x509SVIDTTL: 10 * time.Second,
+			jwtSVIDTTL:  1 * time.Second,
+			expect:      "1m",
 		},
 		{
-			svidTTL: 15 * time.Second,
-			expect:  "1m30s",
+			x509SVIDTTL: 15 * time.Second,
+			jwtSVIDTTL:  1 * time.Second,
+			expect:      "1m30s",
 		},
 		{
-			svidTTL: 10 * time.Minute,
-			expect:  "1h",
+			x509SVIDTTL: 10 * time.Minute,
+			jwtSVIDTTL:  1 * time.Second,
+			expect:      "1h",
 		},
 		{
-			svidTTL: 22 * time.Minute,
-			expect:  "2h12m",
+			x509SVIDTTL: 22 * time.Minute,
+			jwtSVIDTTL:  1 * time.Second,
+			expect:      "2h12m",
 		},
 		{
-			svidTTL: 24 * time.Hour,
-			expect:  "144h",
+			x509SVIDTTL: 24 * time.Hour,
+			jwtSVIDTTL:  1 * time.Second,
+			expect:      "144h",
 		},
 		{
-			svidTTL: 0,
-			expect:  "6h",
+			x509SVIDTTL: 0,
+			jwtSVIDTTL:  1 * time.Second,
+			expect:      "6h",
+		},
+
+		{
+			x509SVIDTTL: 1 * time.Second,
+			jwtSVIDTTL:  10 * time.Second,
+			expect:      "1m",
+		},
+		{
+			x509SVIDTTL: 1 * time.Second,
+			jwtSVIDTTL:  15 * time.Second,
+			expect:      "1m30s",
+		},
+		{
+			x509SVIDTTL: 1 * time.Second,
+			jwtSVIDTTL:  10 * time.Minute,
+			expect:      "1h",
+		},
+		{
+			x509SVIDTTL: 1 * time.Second,
+			jwtSVIDTTL:  22 * time.Minute,
+			expect:      "2h12m",
+		},
+		{
+			x509SVIDTTL: 1 * time.Second,
+			jwtSVIDTTL:  24 * time.Hour,
+			expect:      "144h",
+		},
+		{
+			x509SVIDTTL: 1 * time.Second,
+			jwtSVIDTTL:  0,
+			expect:      "30m",
 		},
 	} {
-		if v.svidTTL == 0 {
-			v.svidTTL = ca.DefaultX509SVIDTTL
+		if v.x509SVIDTTL == 0 {
+			v.x509SVIDTTL = ca.DefaultX509SVIDTTL
+		}
+		if v.jwtSVIDTTL == 0 {
+			v.jwtSVIDTTL = ca.DefaultJWTSVIDTTL
 		}
 
-		assert.Equal(t, v.expect, printMinCATTL(v.svidTTL))
+		// The expected value is the MinCATTL calculated from the largest of the available TTLs
+		if v.x509SVIDTTL > v.jwtSVIDTTL {
+			assert.Equal(t, v.expect, printMinCATTL(v.x509SVIDTTL))
+		} else {
+			assert.Equal(t, v.expect, printMinCATTL(v.jwtSVIDTTL))
+		}
 	}
 }
 

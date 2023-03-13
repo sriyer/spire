@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/spire-plugin-sdk/pluginsdk"
+	"github.com/spiffe/spire-plugin-sdk/private"
 	"github.com/spiffe/spire/pkg/common/telemetry"
 	"google.golang.org/grpc"
+)
+
+const (
+	deinitTimeout = 10 * time.Second
 )
 
 // Plugin is a loaded plugin.
@@ -40,6 +46,16 @@ func newPlugin(ctx context.Context, conn grpc.ClientConnInterface, info PluginIn
 	if err != nil {
 		return nil, err
 	}
+
+	closers = append(closers, closerFunc(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), deinitTimeout)
+		defer cancel()
+		if err := private.Deinit(ctx, conn); err != nil {
+			log.WithError(err).Error("Failed to deinitialize plugin")
+		} else {
+			log.Debug("Plugin deinitialized")
+		}
+	}))
 
 	return &pluginImpl{
 		conn:             conn,

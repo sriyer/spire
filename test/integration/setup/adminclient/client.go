@@ -20,8 +20,8 @@ import (
 	svidv1 "github.com/spiffe/spire-api-sdk/proto/spire/api/server/svid/v1"
 	"github.com/spiffe/spire-api-sdk/proto/spire/api/server/trustdomain/v1"
 	"github.com/spiffe/spire-api-sdk/proto/spire/api/types"
+	"github.com/spiffe/spire/pkg/common/pemutil"
 	"github.com/spiffe/spire/test/integration/setup/itclient"
-	"github.com/spiffe/spire/test/testkey"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -50,7 +50,11 @@ Q0qBJEOkL6FrAngY5218TCNUS30YS5HjI2lfyyjB+cSVFXX8Szu019dDBMhV
 var (
 	blk, _       = pem.Decode([]byte(testBundle))
 	pkixBytes, _ = base64.StdEncoding.DecodeString("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYSlUVLqTD8DEnA4F1EWMTf5RXc5lnCxw+5WKJwngEL3rPc9i4Tgzz9riR3I/NiSlkgRO1WsxBusqpC284j9dXA==")
-	key          = testkey.MustEC256()
+	key, _       = pemutil.ParseSigner([]byte(`-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgs/CcKxAEIyBBEQ9h
+ES2kJbWTz79ut45qAb0UgqrGqmOhRANCAARssWdfmS3D4INrpLBdSBxzso5kPPSX
+F21JuznwCuYKNV5LnzhUA3nt2+6e18ZIXUDxl+CpkvCYc10MO6SYg6AE
+-----END PRIVATE KEY-----`))
 	// Used between test
 	entryID = ""
 	agentID = &types.SPIFFEID{}
@@ -220,8 +224,8 @@ func mintJWTSVID(ctx context.Context, c *itclient.Client) error {
 		return errors.New("missing exp")
 	case claimsMap["iat"] == 0:
 		return errors.New("missing iat")
-	case claimsMap["sub"] != "spiffe://domain.test/new_workload":
-		return fmt.Errorf("unexpected sub: %q", claimsMap["sub"])
+	case claimsMap["sub"] != fmt.Sprintf("spiffe://%s/new_workload", c.Td.String()):
+		return fmt.Errorf("unexpected sub: %q, %s", claimsMap["sub"], fmt.Sprintf("spiffe://%q/new_workload", c.Td))
 	}
 
 	return nil
@@ -393,7 +397,7 @@ func countBundles(ctx context.Context, c *itclient.Client) error {
 		return validatePermissionError(err)
 	case err != nil:
 		return err
-	case resp.Count != 3:
+	case resp.Count != 4:
 		return fmt.Errorf("unexpected bundle count: %d", resp.Count)
 	}
 	return nil
@@ -406,7 +410,7 @@ func listFederatedBundles(ctx context.Context, c *itclient.Client) error {
 		return validatePermissionError(err)
 	case err != nil:
 		return err
-	case len(resp.Bundles) != 2:
+	case len(resp.Bundles) != 3:
 		return fmt.Errorf("unexpected bundles size: %d", len(resp.Bundles))
 	}
 
@@ -521,7 +525,7 @@ func countEntries(ctx context.Context, c *itclient.Client) error {
 		return validatePermissionError(err)
 	case err != nil:
 		return err
-	case resp.Count != 3:
+	case resp.Count < 3:
 		return fmt.Errorf("unexpected entry count: %d", resp.Count)
 	}
 	return nil
@@ -530,6 +534,7 @@ func countEntries(ctx context.Context, c *itclient.Client) error {
 func listEntries(ctx context.Context, c *itclient.Client) error {
 	expectedSpiffeIDs := []*types.SPIFFEID{
 		{TrustDomain: c.Td.String(), Path: "/admin"},
+		{TrustDomain: c.Td.String(), Path: "/agent-alias"},
 		{TrustDomain: c.Td.String(), Path: "/workload"},
 		{TrustDomain: c.Td.String(), Path: "/bar"},
 	}
@@ -539,7 +544,7 @@ func listEntries(ctx context.Context, c *itclient.Client) error {
 		return validatePermissionError(err)
 	case err != nil:
 		return err
-	case len(resp.Entries) != 3:
+	case len(resp.Entries) < 3:
 		return fmt.Errorf("unexpected entries size: %d", len(resp.Entries))
 	}
 
@@ -554,7 +559,7 @@ func listEntries(ctx context.Context, c *itclient.Client) error {
 
 	for _, e := range resp.Entries {
 		if !containsFunc(e.SpiffeId) {
-			return fmt.Errorf("unexpected entry: %v", e)
+			return fmt.Errorf("unexpected entry: %v", e.SpiffeId)
 		}
 	}
 

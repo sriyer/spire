@@ -4,11 +4,15 @@ on:
     tags:
       - 'v[0-9].[0-9]+.[0-9]+'
 env:
-  GO_VERSION: 1.19.1
+  GO_VERSION: 1.19.4
 jobs:
   cache-deps:
     name: cache-deps (linux)
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -26,8 +30,12 @@ jobs:
 
   lint:
     name: lint (linux)
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     needs: cache-deps
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -59,9 +67,13 @@ jobs:
   unit-test:
     strategy:
       matrix:
-        OS: [ubuntu-18.04, macos-latest]
+        OS: [ubuntu-20.04, macos-latest]
     runs-on: ${{ matrix.OS }}
     needs: cache-deps
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -79,8 +91,12 @@ jobs:
 
   unit-test-race-detector:
     name: unit-test (linux with race detection)
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     needs: cache-deps
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -98,8 +114,12 @@ jobs:
 
   artifacts:
     name: artifacts (linux)
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     needs: [cache-deps]
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -129,8 +149,12 @@ jobs:
 
   images:
     name: images (linux)
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     needs: [cache-deps]
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -153,7 +177,7 @@ jobs:
       - name: Build images
         run: make images
       - name: Export images
-        run: docker save spire-server:latest-local spire-agent:latest-local k8s-workload-registrar:latest-local oidc-discovery-provider:latest-local | gzip > images.tar.gz
+        run: tar -czvf images.tar.gz *-image.tar
       - name: Archive images
         uses: actions/upload-artifact@v3
         with:
@@ -164,6 +188,10 @@ jobs:
     name: images (windows)
     runs-on: windows-2022
     needs: artifact-windows
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -184,42 +212,14 @@ jobs:
           name: images-windows
           path: images-windows.tar.gz
 
-  scratch-images:
-    runs-on: ubuntu-18.04
-    needs: [cache-deps]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup go
-        uses: actions/setup-go@v3
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: Load cached deps
-        uses: actions/cache@v3
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-      - name: Load cached build tools
-        uses: actions/cache@v3
-        with:
-          path: .build
-          key: ${{ runner.os }}-tools-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-tools-
-      - name: Build scratch images
-        run: make scratch-images
-      - name: Export scratch images
-        run: docker save spire-server-scratch:latest-local spire-agent-scratch:latest-local k8s-workload-registrar-scratch:latest-local oidc-discovery-provider-scratch:latest-local | gzip > scratch-images.tar.gz
-      - name: Archive scratch images
-        uses: actions/upload-artifact@v3
-        with:
-          name: scratch-images
-          path: scratch-images.tar.gz
-
   integration:
     name: integration (linux)
-    runs-on: ubuntu-18.04
-    needs: [cache-deps, images, scratch-images]
+    runs-on: ubuntu-20.04
+    needs: [cache-deps, images]
+
+    permissions:
+      contents: read
+
     strategy:
       fail-fast: false
       matrix:
@@ -247,6 +247,8 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: ${{ env.GO_VERSION }}
+      - name: Install regctl
+        uses: regclient/actions/regctl-installer@main
       - name: Load cached deps
         uses: actions/cache@v3
         with:
@@ -264,15 +266,10 @@ jobs:
         with:
           name: images
           path: .
-      - name: Download archived scratch images
-        uses: actions/download-artifact@v3
-        with:
-          name: scratch-images
-          path: .
       - name: Load archived images
-        run: zcat images.tar.gz | docker load
-      - name: Load archived scratch images
-        run: zcat scratch-images.tar.gz | docker load
+        run: |
+          tar xvf images.tar.gz
+          make load-images
       - name: Run integration tests
         env:
           NUM_RUNNERS: ${{ matrix.num_runners }}
@@ -287,8 +284,10 @@ jobs:
     name: integration (windows)
     runs-on: windows-2022
     needs: images-windows
-    strategy:
-      fail-fast: false
+
+    permissions:
+      contents: read
+
     defaults:
       run:
         shell: msys2 {0}
@@ -336,6 +335,10 @@ jobs:
   cache-deps-windows:
     name: cache-deps (windows)
     runs-on: windows-2022
+
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -355,6 +358,10 @@ jobs:
     name: lint (windows)
     runs-on: windows-2022
     needs: cache-deps-windows
+
+    permissions:
+      contents: read
+
     defaults:
       run:
         shell: msys2 {0}
@@ -384,11 +391,11 @@ jobs:
           update: true
           install: >-
             git
-            base-devel 
-            mingw-w64-x86_64-toolchain 
-            unzip 
+            base-devel
+            mingw-w64-x86_64-toolchain
+            unzip
       - name: Lint
-        run: make lint
+        run: make lint-code
       - name: Tidy check
         run: make tidy-check
       - name: Generate check
@@ -398,6 +405,10 @@ jobs:
     name: unit-test (windows)
     runs-on: windows-2022
     needs: cache-deps-windows
+
+    permissions:
+      contents: read
+
     defaults:
       run:
         shell: msys2 {0}
@@ -420,16 +431,20 @@ jobs:
           update: true
           install: >-
             git
-            base-devel 
-            mingw-w64-x86_64-toolchain 
-            unzip 
+            base-devel
+            mingw-w64-x86_64-toolchain
+            unzip
       - name: Run unit tests
         run: ./.github/workflows/scripts/run_unit_tests.sh
-          
+
   artifact-windows:
     name: artifact (windows)
     runs-on: windows-2022
     needs: cache-deps-windows
+
+    permissions:
+      contents: read
+
     defaults:
       run:
         shell: msys2 {0}
@@ -459,10 +474,10 @@ jobs:
           update: true
           install: >-
             git
-            base-devel 
-            mingw-w64-x86_64-toolchain 
+            base-devel
+            mingw-w64-x86_64-toolchain
             zip
-            unzip 
+            unzip
       - name: Build artifacts
         run: ./.github/workflows/scripts/build_artifacts.sh
       - name: Archive binaries
@@ -477,9 +492,13 @@ jobs:
           path: ./artifacts/
 
   publish-artifacts:
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     needs: [lint, unit-test, unit-test-race-detector, artifacts, integration,
             lint-windows, unit-test-windows, artifact-windows, integration-windows]
+
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -495,46 +514,45 @@ jobs:
           # set GH_REPO to the repository to create the release in.
           #
           # See https://github.com/cli/cli/issues/3556
-          GH_REPO: ${{ github.repository }} 
+          GH_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Create the release using the version number as the title
         run: gh release create "${GITHUB_REF#refs/tags/}" ./artifacts/*.zip ./artifacts/*.tar.gz ./artifacts/*.txt --title "${GITHUB_REF#refs/tags/}"
 
   publish-images:
-    runs-on: ubuntu-18.04
-    needs: [lint, unit-test, unit-test-race-detector, artifacts, integration]
+    runs-on: ubuntu-20.04
+    needs: [lint, unit-test, unit-test-race-detector, artifacts, integration,
+            lint-windows, unit-test-windows, artifact-windows, integration-windows]
+
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+
+    env:
+      COSIGN_EXPERIMENTAL: 1
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v2.8.1
+        with:
+          cosign-release: v1.13.1
+      - name: Install regctl
+        uses: regclient/actions/regctl-installer@main
       - name: Download archived images
         uses: actions/download-artifact@v3
         with:
           name: images
           path: .
-      - name: Download archived scratch images
-        uses: actions/download-artifact@v3
-        with:
-          name: scratch-images
-          path: .
-      - name: Load archived images
-        run: zcat images.tar.gz | docker load
-      - name: Load archived scratch images
-        run: zcat scratch-images.tar.gz | docker load
-      - name: Log in to GCR
-        uses: docker/login-action@v2
-        with:
-          registry: gcr.io
-          username: _json_key
-          password: ${{ secrets.GCR_JSON_KEY }}
-      # Push the images to GCR using the version number (without the "v" prefix).
-      - name: Push images
-        run: ./.github/workflows/scripts/push-images.sh "${GITHUB_REF#refs/tags/v}"
       - name: Log in to GHCR
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Push the images to GHCR using the version number (without the "v" prefix).
       - name: Push images
-        run: ./.github/workflows/scripts/push-scratch-images.sh "${GITHUB_REF#refs/tags/v}"
+        run: |
+          tar xzvf images.tar.gz
+          ./.github/workflows/scripts/push-images.sh "${GITHUB_REF}"

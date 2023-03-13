@@ -5,14 +5,144 @@ package run
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"syscall"
 	"testing"
 
-	"github.com/hashicorp/hcl/hcl/printer"
 	"github.com/spiffe/spire/pkg/agent"
+	"github.com/spiffe/spire/pkg/common/catalog"
+	commoncli "github.com/spiffe/spire/pkg/common/cli"
+	"github.com/spiffe/spire/pkg/common/fflag"
+	"github.com/spiffe/spire/pkg/common/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCommand_Run(t *testing.T) {
+	testTempDir := t.TempDir()
+	testDataDir := fmt.Sprintf("%s/data", testTempDir)
+	testAgentSocketDir := fmt.Sprintf("%s/spire-agent", testTempDir)
+
+	type fields struct {
+		logOptions         []log.Option
+		env                *commoncli.Env
+		allowUnknownConfig bool
+	}
+	type args struct {
+		args []string
+	}
+	type want struct {
+		code               int
+		dataDirCreated     bool
+		agentUdsDirCreated bool
+		stderrContent      string
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   want
+	}{
+		{
+			name: "don't create any dir when error loading nonexistent config",
+			args: args{
+				args: []string{},
+			},
+			fields: fields{
+				logOptions: []log.Option{},
+				env: &commoncli.Env{
+					Stderr: new(bytes.Buffer),
+				},
+				allowUnknownConfig: false,
+			},
+			want: want{
+				code:               1,
+				agentUdsDirCreated: false,
+				dataDirCreated:     false,
+				stderrContent:      "could not find config file",
+			},
+		},
+		{
+			name: "don't create any dir when error loading invalid config",
+			args: args{
+				args: []string{
+					"-config", "../../../../test/fixture/config/agent_run_posix.conf",
+					"-namedPipeName", "\\spire-agent\\public\\api",
+				},
+			},
+			fields: fields{
+				logOptions: []log.Option{},
+				env: &commoncli.Env{
+					Stderr: new(bytes.Buffer),
+				},
+				allowUnknownConfig: false,
+			},
+			want: want{
+				code:               1,
+				agentUdsDirCreated: false,
+				dataDirCreated:     false,
+				stderrContent:      "flag provided but not defined: -namedPipeName",
+			},
+		},
+		{
+			name: "creates spire-agent uds and data dirs",
+			args: args{
+				args: []string{
+					"-config", "../../../../test/fixture/config/agent_run_posix.conf",
+					"-trustBundle", "../../../../conf/agent/dummy_root_ca.crt",
+					"-dataDir", testDataDir,
+					"-socketPath", fmt.Sprintf("%s/spire-agent/api.sock", testTempDir),
+				},
+			},
+			fields: fields{
+				logOptions: []log.Option{},
+				env: &commoncli.Env{
+					Stderr: new(bytes.Buffer),
+				},
+				allowUnknownConfig: false,
+			},
+			want: want{
+				code:               1,
+				agentUdsDirCreated: true,
+				dataDirCreated:     true,
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			_ = fflag.Unload()
+			os.RemoveAll(testDataDir)
+
+			cmd := &Command{
+				logOptions:         testCase.fields.logOptions,
+				env:                testCase.fields.env,
+				allowUnknownConfig: testCase.fields.allowUnknownConfig,
+			}
+
+			code := cmd.Run(testCase.args.args)
+
+			assert.Equal(t, testCase.want.code, code)
+			if testCase.want.stderrContent == "" {
+				assert.Empty(t, testCase.fields.env.Stderr.(*bytes.Buffer).String())
+			} else {
+				assert.Contains(t, testCase.fields.env.Stderr.(*bytes.Buffer).String(), testCase.want.stderrContent)
+			}
+			if testCase.want.agentUdsDirCreated {
+				assert.DirExistsf(t, testAgentSocketDir, "spire-agent uds dir should be created")
+				currentUmask := syscall.Umask(0)
+				assert.Equalf(t, currentUmask, 0027, "spire-agent process should be created with 0027 umask")
+			} else {
+				assert.NoDirExistsf(t, testAgentSocketDir, "spire-agent uds dir should not be created")
+			}
+			if testCase.want.dataDirCreated {
+				assert.DirExistsf(t, testDataDir, "expected data directory to be created")
+			} else {
+				assert.NoDirExistsf(t, testDataDir, "expected data directory to not be created")
+			}
+		})
+	}
+}
 
 func TestParseFlagsGood(t *testing.T) {
 	c, err := parseFlags("run", []string{
@@ -51,38 +181,40 @@ func TestParseConfigGood(t *testing.T) {
 	assert.Equal(t, true, c.Agent.AllowUnauthenticatedVerifiers)
 	assert.Equal(t, []string{"c1", "c2", "c3"}, c.Agent.AllowedForeignJWTClaims)
 
+	// Parse/reprint cycle trims outer whitespace
+	const data = `join_token = "PLUGIN-AGENT-NOT-A-SECRET"`
+
 	// Check for plugins configurations
-	pluginConfigs := *c.Plugins
-	expectedData := "join_token = \"PLUGIN-AGENT-NOT-A-SECRET\""
-	var data bytes.Buffer
-	err = printer.DefaultConfig.Fprint(&data, pluginConfigs["plugin_type_agent"]["plugin_name_agent"].PluginData)
-	assert.NoError(t, err)
+	expectedPluginConfigs := catalog.PluginConfigs{
+		{
+			Type:     "plugin_type_agent",
+			Name:     "plugin_name_agent",
+			Path:     "./pluginAgentCmd",
+			Checksum: "pluginAgentChecksum",
+			Data:     data,
+			Disabled: false,
+		},
+		{
+			Type:     "plugin_type_agent",
+			Name:     "plugin_disabled",
+			Path:     "./pluginAgentCmd",
+			Checksum: "pluginAgentChecksum",
+			Data:     data,
+			Disabled: true,
+		},
+		{
+			Type:     "plugin_type_agent",
+			Name:     "plugin_enabled",
+			Path:     "./pluginAgentCmd",
+			Checksum: "pluginAgentChecksum",
+			Data:     data,
+			Disabled: false,
+		},
+	}
 
-	assert.Len(t, pluginConfigs, 1)
-	assert.Len(t, pluginConfigs["plugin_type_agent"], 3)
-
-	pluginConfig := pluginConfigs["plugin_type_agent"]["plugin_name_agent"]
-	assert.Nil(t, pluginConfig.Enabled)
-	assert.Equal(t, true, pluginConfig.IsEnabled())
-	assert.Equal(t, "pluginAgentChecksum", pluginConfig.PluginChecksum)
-	assert.Equal(t, "./pluginAgentCmd", pluginConfig.PluginCmd)
-	assert.Equal(t, data.String(), expectedData)
-
-	// Disabled plugin
-	pluginConfig = pluginConfigs["plugin_type_agent"]["plugin_disabled"]
-	assert.NotNil(t, pluginConfig.Enabled)
-	assert.Equal(t, false, pluginConfig.IsEnabled())
-	assert.Equal(t, "pluginAgentChecksum", pluginConfig.PluginChecksum)
-	assert.Equal(t, "./pluginAgentCmd", pluginConfig.PluginCmd)
-	assert.Equal(t, data.String(), expectedData)
-
-	// Enabled plugin
-	pluginConfig = pluginConfigs["plugin_type_agent"]["plugin_enabled"]
-	assert.NotNil(t, pluginConfig.Enabled)
-	assert.Equal(t, true, pluginConfig.IsEnabled())
-	assert.Equal(t, "pluginAgentChecksum", pluginConfig.PluginChecksum)
-	assert.Equal(t, "./pluginAgentCmd", pluginConfig.PluginCmd)
-	assert.Equal(t, data.String(), expectedData)
+	pluginConfigs, err := catalog.PluginConfigsFromHCLNode(c.Plugins)
+	require.NoError(t, err)
+	require.Equal(t, expectedPluginConfigs, pluginConfigs)
 }
 
 func mergeInputCasesOS() []mergeInputCase {
@@ -163,7 +295,7 @@ func newAgentConfigCasesOS() []newAgentConfigCase {
 			},
 		},
 		{
-			msg: "admin_socket_path configured with similar folther that socket_path",
+			msg: "admin_socket_path configured with similar folder that socket_path",
 			input: func(c *Config) {
 				c.Agent.SocketPath = "/tmp/workload/workload.sock"
 				c.Agent.AdminSocketPath = "/tmp/workload-admin/admin.sock"

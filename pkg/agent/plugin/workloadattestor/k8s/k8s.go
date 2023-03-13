@@ -40,18 +40,12 @@ const (
 	defaultTokenPath         = "/var/run/secrets/kubernetes.io/serviceaccount/token" //nolint: gosec // false positive
 	defaultNodeNameEnv       = "MY_NODE_NAME"
 	defaultReloadInterval    = time.Minute
+	maximumAmountCache       = 10
 )
 
 func BuiltIn() catalog.BuiltIn {
 	return builtin(New())
 }
-
-type containerLookup int
-
-const (
-	containerInPod = iota
-	containerNotInPod
-)
 
 func builtin(p *Plugin) catalog.BuiltIn {
 	return catalog.MakeBuiltIn(pluginName,
@@ -119,6 +113,36 @@ type HCLConfig struct {
 	// ReloadInterval controls how often TLS and token configuration is loaded
 	// from the disk.
 	ReloadInterval string `hcl:"reload_interval"`
+
+	// DisableContainerSelectors disables the gathering of selectors for the
+	// specific container running the workload. This allows attestation to
+	// succeed with just pod related selectors when the workload pod is known
+	// but the container may not be in a ready state at the time of attestation
+	// (e.g. when a postStart hook has yet to complete).
+	DisableContainerSelectors bool `hcl:"disable_container_selectors"`
+
+	// Experimental enables experimental features.
+	Experimental *ExperimentalK8SConfig `hcl:"experimental,omitempty"`
+}
+
+type ExperimentalK8SConfig struct {
+	// Sigstore contains sigstore specific configs.
+	Sigstore *SigstoreHCLConfig `hcl:"sigstore,omitempty"`
+}
+
+// SigstoreHCLConfig holds the sigstore configuration parsed from HCL
+type SigstoreHCLConfig struct {
+	// EnforceSCT is the parameter to be set as false in case of a private deployment not using the public CT
+	EnforceSCT *bool `hcl:"enforce_sct, omitempty"`
+
+	// RekorURL is the URL for the rekor server to use to verify signatures and public keys
+	RekorURL *string `hcl:"rekor_url,omitempty"`
+
+	// SkippedImages is a list of images that should skip sigstore verification
+	SkippedImages []string `hcl:"skip_signature_verification_image_list"`
+
+	// AllowedSubjects is a list of subjects that should be allowed after verification
+	AllowedSubjects map[string][]string `hcl:"allowed_subjects_list"`
 }
 
 // k8sConfig holds the configuration distilled from HCL
@@ -135,12 +159,15 @@ type k8sConfig struct {
 	KubeletCAPath              string
 	NodeName                   string
 	ReloadInterval             time.Duration
+	DisableContainerSelectors  bool
 
 	Client     *kubeletClient
 	LastReload time.Time
 }
 
 type ContainerHelper interface {
+	Configure(config *HCLConfig, log hclog.Logger) error
+	GetOSSelectors(ctx context.Context, log hclog.Logger, containerStatus *corev1.ContainerStatus) ([]string, error)
 	GetPodUIDAndContainerID(pID int32, log hclog.Logger) (types.UID, string, error)
 }
 
@@ -180,6 +207,7 @@ func (p *Plugin) Attest(ctx context.Context, req *workloadattestorv1.AttestReque
 	if err != nil {
 		return nil, err
 	}
+	podKnown := podUID != ""
 
 	// Not a Kubernetes pod
 	if containerID == "" {
@@ -204,21 +232,45 @@ func (p *Plugin) Attest(ctx context.Context, req *workloadattestorv1.AttestReque
 		var attestResponse *workloadattestorv1.AttestResponse
 		for _, item := range list.Items {
 			item := item
-			if isNotPod(item.UID, podUID) {
+			if podKnown && item.UID != podUID {
+				// The pod holding the container is known. Skip unrelated pods.
 				continue
 			}
 
-			lookupStatus, lookup := lookUpContainerInPod(containerID, item.Status, log)
-			switch lookup {
-			case containerInPod:
+			var selectorValues []string
+
+			containerStatus, containerFound := lookUpContainerInPod(containerID, item.Status, log)
+			switch {
+			case containerFound:
+				// The workload container was found in this pod. Add pod
+				// selectors. Only add workload container selectors if
+				// container selectors have not been disabled.
+				selectorValues = append(selectorValues, getSelectorValuesFromPodInfo(&item)...)
+				if !config.DisableContainerSelectors {
+					selectorValues = append(selectorValues, getSelectorValuesFromWorkloadContainerStatus(containerStatus)...)
+
+					osSelector, err := p.c.GetOSSelectors(ctx, log, containerStatus)
+					switch {
+					case err != nil:
+						return nil, err
+					case len(osSelector) > 0:
+						selectorValues = append(selectorValues, osSelector...)
+					}
+				}
+
+			case podKnown && config.DisableContainerSelectors:
+				// The workload container was not found (i.e. not ready yet?)
+				// but the pod is known. If container selectors have been
+				// disabled, then allow the pod selectors to be used.
+				selectorValues = append(selectorValues, getSelectorValuesFromPodInfo(&item)...)
+			}
+
+			if len(selectorValues) > 0 {
 				if attestResponse != nil {
 					log.Warn("Two pods found with same container Id")
 					return nil, status.Error(codes.Internal, "two pods found with same container Id")
 				}
-				attestResponse = &workloadattestorv1.AttestResponse{
-					SelectorValues: getSelectorValuesFromPodInfo(&item, lookupStatus),
-				}
-			case containerNotInPod:
+				attestResponse = &workloadattestorv1.AttestResponse{SelectorValues: selectorValues}
 			}
 		}
 
@@ -288,8 +340,8 @@ func (p *Plugin) Configure(ctx context.Context, req *configv1.ConfigureRequest) 
 		return nil, status.Error(codes.InvalidArgument, "cannot use both the read-only and secure port")
 	}
 
-	containerHelper, err := createHelper(p)
-	if err != nil {
+	containerHelper := createHelper(p)
+	if err := containerHelper.Configure(config, p.log); err != nil {
 		return nil, err
 	}
 
@@ -321,7 +373,9 @@ func (p *Plugin) Configure(ctx context.Context, req *configv1.ConfigureRequest) 
 		KubeletCAPath:              config.KubeletCAPath,
 		NodeName:                   nodeName,
 		ReloadInterval:             reloadInterval,
+		DisableContainerSelectors:  config.DisableContainerSelectors,
 	}
+
 	if err := p.reloadKubeletClient(c); err != nil {
 		return nil, err
 	}
@@ -565,7 +619,7 @@ func (c *kubeletClient) GetPodList() (*corev1.PodList, error) {
 	return out, nil
 }
 
-func lookUpContainerInPod(containerID string, status corev1.PodStatus, log hclog.Logger) (*corev1.ContainerStatus, containerLookup) {
+func lookUpContainerInPod(containerID string, status corev1.PodStatus, log hclog.Logger) (*corev1.ContainerStatus, bool) {
 	for _, status := range status.ContainerStatuses {
 		// TODO: should we be keying off of the status or is the lack of a
 		// container id sufficient to know the container is not ready?
@@ -582,7 +636,7 @@ func lookUpContainerInPod(containerID string, status corev1.PodStatus, log hclog
 		}
 
 		if containerID == containerURL.Host {
-			return &status, containerInPod
+			return &status, true
 		}
 	}
 
@@ -602,16 +656,16 @@ func lookUpContainerInPod(containerID string, status corev1.PodStatus, log hclog
 		}
 
 		if containerID == containerURL.Host {
-			return &status, containerInPod
+			return &status, true
 		}
 	}
 
-	return nil, containerNotInPod
+	return nil, false
 }
 
-func getPodImageIdentifiers(containerStatusArray []corev1.ContainerStatus) map[string]bool {
+func getPodImageIdentifiers(containerStatuses ...corev1.ContainerStatus) map[string]struct{} {
 	// Map is used purely to exclude duplicate selectors, value is unused.
-	podImages := make(map[string]bool)
+	podImages := make(map[string]struct{})
 	// Note that for each pod image we generate *2* matching selectors.
 	// This is to support matching against ImageID, which has a SHA
 	// docker.io/envoyproxy/envoy-alpine@sha256:bf862e5f5eca0a73e7e538224578c5cf867ce2be91b5eaed22afc153c00363eb
@@ -620,36 +674,28 @@ func getPodImageIdentifiers(containerStatusArray []corev1.ContainerStatus) map[s
 	// while also maintaining backwards compatibility and allowing for dynamic workload registration (k8s operator)
 	// when the SHA is not yet known (e.g. before the image pull is initiated at workload creation time)
 	// More info here: https://github.com/spiffe/spire/issues/2026
-	for _, status := range containerStatusArray {
-		podImages[status.ImageID] = true
-		podImages[status.Image] = true
+	for _, containerStatus := range containerStatuses {
+		podImages[containerStatus.ImageID] = struct{}{}
+		podImages[containerStatus.Image] = struct{}{}
 	}
 	return podImages
 }
 
-func getSelectorValuesFromPodInfo(pod *corev1.Pod, status *corev1.ContainerStatus) []string {
-	podImageIdentifiers := getPodImageIdentifiers(pod.Status.ContainerStatuses)
-	podInitImageIdentifiers := getPodImageIdentifiers(pod.Status.InitContainerStatuses)
-	containerImageIdentifiers := getPodImageIdentifiers([]corev1.ContainerStatus{*status})
-
+func getSelectorValuesFromPodInfo(pod *corev1.Pod) []string {
 	selectorValues := []string{
 		fmt.Sprintf("sa:%s", pod.Spec.ServiceAccountName),
 		fmt.Sprintf("ns:%s", pod.Namespace),
 		fmt.Sprintf("node-name:%s", pod.Spec.NodeName),
 		fmt.Sprintf("pod-uid:%s", pod.UID),
 		fmt.Sprintf("pod-name:%s", pod.Name),
-		fmt.Sprintf("container-name:%s", status.Name),
 		fmt.Sprintf("pod-image-count:%s", strconv.Itoa(len(pod.Status.ContainerStatuses))),
 		fmt.Sprintf("pod-init-image-count:%s", strconv.Itoa(len(pod.Status.InitContainerStatuses))),
 	}
 
-	for containerImage := range containerImageIdentifiers {
-		selectorValues = append(selectorValues, fmt.Sprintf("container-image:%s", containerImage))
-	}
-	for podImage := range podImageIdentifiers {
+	for podImage := range getPodImageIdentifiers(pod.Status.ContainerStatuses...) {
 		selectorValues = append(selectorValues, fmt.Sprintf("pod-image:%s", podImage))
 	}
-	for podInitImage := range podInitImageIdentifiers {
+	for podInitImage := range getPodImageIdentifiers(pod.Status.InitContainerStatuses...) {
 		selectorValues = append(selectorValues, fmt.Sprintf("pod-init-image:%s", podInitImage))
 	}
 
@@ -661,6 +707,14 @@ func getSelectorValuesFromPodInfo(pod *corev1.Pod, status *corev1.ContainerStatu
 		selectorValues = append(selectorValues, fmt.Sprintf("pod-owner-uid:%s:%s", ownerReference.Kind, ownerReference.UID))
 	}
 
+	return selectorValues
+}
+
+func getSelectorValuesFromWorkloadContainerStatus(status *corev1.ContainerStatus) []string {
+	selectorValues := []string{fmt.Sprintf("container-name:%s", status.Name)}
+	for containerImage := range getPodImageIdentifiers(*status) {
+		selectorValues = append(selectorValues, fmt.Sprintf("container-image:%s", containerImage))
+	}
 	return selectorValues
 }
 

@@ -49,6 +49,5 @@ type M3Config struct {
 }
 
 type InMem struct {
-	Enabled    *bool    `hcl:"enabled"`
 	UnusedKeys []string `hcl:",unusedKeys"`
 }

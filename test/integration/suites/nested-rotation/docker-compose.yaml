@@ -37,7 +37,7 @@ services:
   intermediateA-agent:
     # Share the host pid namespace so this agent can attest the leafA server
     pid: "host"
-    image: spire-agent:latest-local
+    image: nested-agent-alpine
     hostname: intermediateA-agent
     depends_on: ["intermediateA-server"]
     volumes:
@@ -62,7 +62,7 @@ services:
       - ./leafA/server:/opt/spire/conf/server
     command: ["-config", "/opt/spire/conf/server/server.conf"]
   leafA-agent:
-    image: spire-agent:latest-local
+    image: nested-agent-alpine
     hostname: leafA-agent
     depends_on: ["intermediateA-server"]
     volumes:
@@ -86,7 +86,7 @@ services:
   intermediateB-agent:
     # Share the host pid namespace so this agent can attest the leafB server
     pid: "host"
-    image: nested-agent
+    image: nested-agent-alpine
     hostname: intermediateB-agent
     depends_on: ["intermediateB-server"]
     volumes:
@@ -111,7 +111,7 @@ services:
       - ./leafB/server:/opt/spire/conf/server
     command: ["-config", "/opt/spire/conf/server/server.conf"]
   leafB-agent:
-    image: nested-agent
+    image: nested-agent-alpine
     hostname: leafB-agent
     depends_on: ["leafB-server"]
     volumes:

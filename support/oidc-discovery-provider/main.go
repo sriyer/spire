@@ -1,26 +1,36 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/spire/pkg/common/log"
 	"github.com/spiffe/spire/pkg/common/telemetry"
+	"github.com/spiffe/spire/pkg/common/version"
 	"github.com/zeebo/errs"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
 
 var (
-	configFlag = flag.String("config", "oidc-discovery-provider.conf", "configuration file")
+	versionFlag = flag.Bool("version", false, "print version")
+	configFlag  = flag.String("config", "oidc-discovery-provider.conf", "configuration file")
 )
 
 func main() {
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println(version.Version())
+		os.Exit(0)
+	}
+
 	if err := run(*configFlag); err != nil {
 		fmt.Fprintf(os.Stderr, "%+v\n", err)
 		os.Exit(1)
@@ -75,7 +85,10 @@ func run(configPath string) error {
 			telemetry.Address: listener.Addr().String(),
 		}).Info("Serving HTTP")
 	default:
-		listener = acmeListener(log, config)
+		listener, err = newACMEListener(log, config)
+		if err != nil {
+			return err
+		}
 		log.Info("Serving HTTPS via ACME")
 	}
 
@@ -86,14 +99,20 @@ func run(configPath string) error {
 
 	if config.HealthChecks != nil {
 		go func() {
-			log.Error(http.ListenAndServe(
-				fmt.Sprintf("localhost:%d", config.HealthChecks.BindPort),
-				NewHealthChecksHandler(source, config),
-			))
+			server := &http.Server{
+				Addr:              fmt.Sprintf(":%d", config.HealthChecks.BindPort),
+				Handler:           NewHealthChecksHandler(source, config),
+				ReadHeaderTimeout: 10 * time.Second,
+			}
+			log.Error(server.ListenAndServe())
 		}()
 	}
 
-	return http.Serve(listener, handler)
+	server := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return server.Serve(listener)
 }
 
 func newSource(log logrus.FieldLogger, config *Config) (JWKSSource, error) {
@@ -121,7 +140,7 @@ func newSource(log logrus.FieldLogger, config *Config) (JWKSSource, error) {
 	}
 }
 
-func acmeListener(log logrus.FieldLogger, config *Config) net.Listener {
+func newACMEListener(log logrus.FieldLogger, config *Config) (net.Listener, error) {
 	var cache autocert.Cache
 	if config.ACME.CacheDir != "" {
 		cache = autocert.DirCache(config.ACME.CacheDir)
@@ -140,7 +159,16 @@ func acmeListener(log logrus.FieldLogger, config *Config) net.Listener {
 			return config.ACME.ToSAccepted
 		},
 	}
-	return m.Listener()
+
+	tlsConfig := m.TLSConfig()
+	tlsConfig.MinVersion = tls.VersionTLS12
+
+	tcpListener, err := net.ListenTCP("tcp", &net.TCPAddr{Port: 443})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create an ACME listener: %w", err)
+	}
+
+	return &acmeListener{TCPListener: tcpListener, conf: tlsConfig}, nil
 }
 
 func logHandler(log logrus.FieldLogger, handler http.Handler) http.Handler {
@@ -153,4 +181,23 @@ func logHandler(log logrus.FieldLogger, handler http.Handler) http.Handler {
 		}).Debug("Incoming request")
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// This code was borrowed and modified from the
+// golang.org/x/crypto/acme/autocert package. It wraps a normal TCP listener to
+// set a reasonable keepalive on the TCP connection in the same vein as the
+// net/http package.
+type acmeListener struct {
+	*net.TCPListener
+	conf *tls.Config
+}
+
+func (ln *acmeListener) Accept() (net.Conn, error) {
+	conn, err := ln.TCPListener.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	_ = conn.SetKeepAlive(true)
+	_ = conn.SetKeepAlivePeriod(3 * time.Minute)
+	return tls.Server(conn, ln.conf), nil
 }

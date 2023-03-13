@@ -11,24 +11,24 @@ private key.
 The SPIFFE ID produced by the plugin is based on the certificate fingerprint,
 which is an unpadded url-safe base64 encoded sha256 hash of the certificate in openssh format.
 
-```
-spiffe://<trust-domain>/spire/agent/sshpop/<fingerprint>
+```xml
+spiffe://<trust_domain>/spire/agent/sshpop/<fingerprint>
 ```
 
-| Configuration | Description | Default                 |
-| ------------- | ----------- | ----------------------- |
-| `cert_authorities` | A list of trusted CAs in ssh `authorized_keys` format. | |
-| `cert_authorities_path` | A file that contains a list of trusted CAs in ssh `authorized_keys` format. | |
-| `canonical_domain` | A domain suffix for validating the hostname against the certificate's valid principals. See CanonicalDomains in ssh_config(5). |
-| `agent_path_template` | A URL path portion format of Agent's SPIFFE ID. Describe in text/template format. | `"{{ .PluginName}}/{{ .Fingerprint }}"` |
+| Configuration           | Description                                                                                                                    | Default                                 |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------|
+| `cert_authorities`      | A list of trusted CAs in ssh `authorized_keys` format.                                                                         |                                         |
+| `cert_authorities_path` | A file that contains a list of trusted CAs in ssh `authorized_keys` format.                                                    |                                         |
+| `canonical_domain`      | A domain suffix for validating the hostname against the certificate's valid principals. See CanonicalDomains in ssh_config(5). |
+| `agent_path_template`   | A URL path portion format of Agent's SPIFFE ID. Describe in text/template format.                                              | `"{{ .PluginName}}/{{ .Fingerprint }}"` |
 
 If both `cert_authorities` and `cert_authorities_path` are configured, the resulting set of authorized keys is the union of both sets.
 
-### Example Config
+## Example Config
 
-##### agent.conf
+### agent.conf
 
-```
+```hcl
     NodeAttestor "sshpop" {
         plugin_data {
             host_cert_path = "./conf/agent/dummy_agent_ssh_key-cert.pub"
@@ -37,9 +37,9 @@ If both `cert_authorities` and `cert_authorities_path` are configured, the resul
     }
 ```
 
-##### server.conf
+### server.conf
 
-```
+```hcl
     NodeAttestor "sshpop" {
         plugin_data {
             cert_authorities = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEAWPAsKJ/qMYUIBeH7BLMRCE/bkUvMHX+7OZhANk45S"]

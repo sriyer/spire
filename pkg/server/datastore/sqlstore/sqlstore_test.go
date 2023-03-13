@@ -1338,9 +1338,9 @@ func (s *PluginSuite) TestFetchRegistrationEntry() {
 					{Type: "Type2", Value: "Value2"},
 					{Type: "Type3", Value: "Value3"},
 				},
-				SpiffeId: "SpiffeId",
-				ParentId: "ParentId",
-				Ttl:      1,
+				SpiffeId:    "SpiffeId",
+				ParentId:    "ParentId",
+				X509SvidTtl: 1,
 				DnsNames: []string{
 					"abcd.efg",
 					"somehost",
@@ -1353,10 +1353,10 @@ func (s *PluginSuite) TestFetchRegistrationEntry() {
 				Selectors: []*common.Selector{
 					{Type: "Type1", Value: "Value1"},
 				},
-				SpiffeId:  "SpiffeId",
-				ParentId:  "ParentId",
-				Ttl:       1,
-				StoreSvid: true,
+				SpiffeId:    "SpiffeId",
+				ParentId:    "ParentId",
+				X509SvidTtl: 1,
+				StoreSvid:   true,
 			},
 		},
 	} {
@@ -1383,7 +1383,7 @@ func (s *PluginSuite) TestPruneRegistrationEntries() {
 		},
 		SpiffeId:    "SpiffeId",
 		ParentId:    "ParentId",
-		Ttl:         1,
+		X509SvidTtl: 1,
 		EntryExpiry: now.Unix(),
 	}
 
@@ -2201,19 +2201,22 @@ func (s *PluginSuite) TestUpdateRegistrationEntry() {
 			{Type: "Type2", Value: "Value2"},
 			{Type: "Type3", Value: "Value3"},
 		},
-		SpiffeId: "spiffe://example.org/foo",
-		ParentId: "spiffe://example.org/bar",
-		Ttl:      1,
+		SpiffeId:    "spiffe://example.org/foo",
+		ParentId:    "spiffe://example.org/bar",
+		X509SvidTtl: 1,
+		JwtSvidTtl:  20,
 	})
 
-	entry.Ttl = 2
+	entry.X509SvidTtl = 11
+	entry.JwtSvidTtl = 21
 	entry.Admin = true
 	entry.Downstream = true
 
 	updatedRegistrationEntry, err := s.ds.UpdateRegistrationEntry(ctx, entry, nil)
 	s.Require().NoError(err)
 	// Verify output has expected values
-	s.Require().Equal(int32(2), entry.Ttl)
+	s.Require().Equal(int32(11), entry.X509SvidTtl)
+	s.Require().Equal(int32(21), entry.JwtSvidTtl)
 	s.Require().True(entry.Admin)
 	s.Require().True(entry.Downstream)
 
@@ -2234,9 +2237,9 @@ func (s *PluginSuite) TestUpdateRegistrationEntryWithStoreSvid() {
 			{Type: "Type1", Value: "Value2"},
 			{Type: "Type1", Value: "Value3"},
 		},
-		SpiffeId: "spiffe://example.org/foo",
-		ParentId: "spiffe://example.org/bar",
-		Ttl:      1,
+		SpiffeId:    "spiffe://example.org/foo",
+		ParentId:    "spiffe://example.org/bar",
+		X509SvidTtl: 1,
 	})
 
 	entry.StoreSvid = true
@@ -2263,16 +2266,17 @@ func (s *PluginSuite) TestUpdateRegistrationEntryWithStoreSvid() {
 }
 
 func (s *PluginSuite) TestUpdateRegistrationEntryWithMask() {
-	// There are 9 fields in a registration entry. Of these, 3 have some validation in the SQL
-	// layer. In this test, we update each of the 9 fields and make sure update works, and also check
-	// with the mask value false to make sure nothing changes. For the 3 fields that have validation
+	// There are 11 fields in a registration entry. Of these, 5 have some validation in the SQL
+	// layer. In this test, we update each of the 11 fields and make sure update works, and also check
+	// with the mask value false to make sure nothing changes. For the 5 fields that have validation
 	// we try with good data, bad data, and with or without a mask (so 4 cases each.)
 
 	// Note that most of the input validation is done in the API layer and has more extensive tests there.
 	oldEntry := &common.RegistrationEntry{
 		ParentId:      "spiffe://example.org/oldParentId",
 		SpiffeId:      "spiffe://example.org/oldSpiffeId",
-		Ttl:           1000,
+		X509SvidTtl:   1000,
+		JwtSvidTtl:    3000,
 		Selectors:     []*common.Selector{{Type: "Type1", Value: "Value1"}},
 		FederatesWith: []string{"spiffe://dom1.org"},
 		Admin:         false,
@@ -2284,19 +2288,21 @@ func (s *PluginSuite) TestUpdateRegistrationEntryWithMask() {
 	newEntry := &common.RegistrationEntry{
 		ParentId:      "spiffe://example.org/oldParentId",
 		SpiffeId:      "spiffe://example.org/newSpiffeId",
-		Ttl:           1000,
+		X509SvidTtl:   4000,
+		JwtSvidTtl:    6000,
 		Selectors:     []*common.Selector{{Type: "Type2", Value: "Value2"}},
 		FederatesWith: []string{"spiffe://dom2.org"},
 		Admin:         false,
 		EntryExpiry:   1000,
 		DnsNames:      []string{"dns2"},
 		Downstream:    false,
-		StoreSvid:     false,
+		StoreSvid:     true,
 	}
 	badEntry := &common.RegistrationEntry{
 		ParentId:      "not a good parent id",
 		SpiffeId:      "",
-		Ttl:           -1000,
+		X509SvidTtl:   -1000,
+		JwtSvidTtl:    -3000,
 		Selectors:     []*common.Selector{},
 		FederatesWith: []string{"invalid federated bundle"},
 		Admin:         false,
@@ -2341,22 +2347,39 @@ func (s *PluginSuite) TestUpdateRegistrationEntryWithMask() {
 			mask:   &common.RegistrationEntryMask{ParentId: false},
 			update: func(e *common.RegistrationEntry) { e.ParentId = newEntry.ParentId },
 			result: func(e *common.RegistrationEntry) {}},
-		// TTL FIELD -- This field is validated so we check with good and bad data
-		{name: "Update TTL, Good Data, Mask True",
-			mask:   &common.RegistrationEntryMask{Ttl: true},
-			update: func(e *common.RegistrationEntry) { e.Ttl = newEntry.Ttl },
-			result: func(e *common.RegistrationEntry) { e.Ttl = newEntry.Ttl }},
-		{name: "Update TTL, Good Data, Mask False",
-			mask:   &common.RegistrationEntryMask{Ttl: false},
-			update: func(e *common.RegistrationEntry) { e.Ttl = badEntry.Ttl },
+		// X509 SVID TTL FIELD -- This field is validated so we check with good and bad data
+		{name: "Update X509 SVID TTL, Good Data, Mask True",
+			mask:   &common.RegistrationEntryMask{X509SvidTtl: true},
+			update: func(e *common.RegistrationEntry) { e.X509SvidTtl = newEntry.X509SvidTtl },
+			result: func(e *common.RegistrationEntry) { e.X509SvidTtl = newEntry.X509SvidTtl }},
+		{name: "Update X509 SVID TTL, Good Data, Mask False",
+			mask:   &common.RegistrationEntryMask{X509SvidTtl: false},
+			update: func(e *common.RegistrationEntry) { e.X509SvidTtl = badEntry.X509SvidTtl },
 			result: func(e *common.RegistrationEntry) {}},
-		{name: "Update TTL, Bad Data, Mask True",
-			mask:   &common.RegistrationEntryMask{Ttl: true},
-			update: func(e *common.RegistrationEntry) { e.Ttl = badEntry.Ttl },
-			err:    errors.New("invalid registration entry: TTL is not set")},
-		{name: "Update TTL, Bad Data, Mask False",
-			mask:   &common.RegistrationEntryMask{Ttl: false},
-			update: func(e *common.RegistrationEntry) { e.Ttl = badEntry.Ttl },
+		{name: "Update X509 SVID TTL, Bad Data, Mask True",
+			mask:   &common.RegistrationEntryMask{X509SvidTtl: true},
+			update: func(e *common.RegistrationEntry) { e.X509SvidTtl = badEntry.X509SvidTtl },
+			err:    errors.New("invalid registration entry: X509SvidTtl is not set")},
+		{name: "Update X509 SVID TTL, Bad Data, Mask False",
+			mask:   &common.RegistrationEntryMask{X509SvidTtl: false},
+			update: func(e *common.RegistrationEntry) { e.X509SvidTtl = badEntry.X509SvidTtl },
+			result: func(e *common.RegistrationEntry) {}},
+		// JWT SVID TTL FIELD -- This field is validated so we check with good and bad data
+		{name: "Update JWT SVID TTL, Good Data, Mask True",
+			mask:   &common.RegistrationEntryMask{JwtSvidTtl: true},
+			update: func(e *common.RegistrationEntry) { e.JwtSvidTtl = newEntry.JwtSvidTtl },
+			result: func(e *common.RegistrationEntry) { e.JwtSvidTtl = newEntry.JwtSvidTtl }},
+		{name: "Update JWT SVID TTL, Good Data, Mask False",
+			mask:   &common.RegistrationEntryMask{JwtSvidTtl: false},
+			update: func(e *common.RegistrationEntry) { e.JwtSvidTtl = badEntry.JwtSvidTtl },
+			result: func(e *common.RegistrationEntry) {}},
+		{name: "Update JWT SVID TTL, Bad Data, Mask True",
+			mask:   &common.RegistrationEntryMask{JwtSvidTtl: true},
+			update: func(e *common.RegistrationEntry) { e.JwtSvidTtl = badEntry.JwtSvidTtl },
+			err:    errors.New("invalid registration entry: JwtSvidTtl is not set")},
+		{name: "Update JWT SVID TTL, Bad Data, Mask False",
+			mask:   &common.RegistrationEntryMask{JwtSvidTtl: false},
+			update: func(e *common.RegistrationEntry) { e.JwtSvidTtl = badEntry.JwtSvidTtl },
 			result: func(e *common.RegistrationEntry) {}},
 		// SELECTORS FIELD -- This field is validated so we check with good and bad data
 		{name: "Update Selectors, Good Data, Mask True",
@@ -2368,7 +2391,7 @@ func (s *PluginSuite) TestUpdateRegistrationEntryWithMask() {
 			update: func(e *common.RegistrationEntry) { e.Selectors = badEntry.Selectors },
 			result: func(e *common.RegistrationEntry) {}},
 		{name: "Update Selectors, Bad Data, Mask True",
-			mask:   &common.RegistrationEntryMask{Selectors: false},
+			mask:   &common.RegistrationEntryMask{Selectors: true},
 			update: func(e *common.RegistrationEntry) { e.Selectors = badEntry.Selectors },
 			err:    errors.New("invalid registration entry: missing selector list")},
 		{name: "Update Selectors, Bad Data, Mask False",
@@ -2462,7 +2485,7 @@ func (s *PluginSuite) TestUpdateRegistrationEntryWithMask() {
 			updatedRegistrationEntry, err := s.ds.UpdateRegistrationEntry(ctx, updateEntry, tt.mask)
 
 			if tt.err != nil {
-				s.Require().Error(tt.err)
+				s.Require().ErrorContains(err, tt.err.Error())
 				return
 			}
 
@@ -2494,9 +2517,9 @@ func (s *PluginSuite) TestDeleteRegistrationEntry() {
 			{Type: "Type2", Value: "Value2"},
 			{Type: "Type3", Value: "Value3"},
 		},
-		SpiffeId: "spiffe://example.org/foo",
-		ParentId: "spiffe://example.org/bar",
-		Ttl:      1,
+		SpiffeId:    "spiffe://example.org/foo",
+		ParentId:    "spiffe://example.org/bar",
+		X509SvidTtl: 1,
 	})
 
 	s.createRegistrationEntry(&common.RegistrationEntry{
@@ -2505,9 +2528,9 @@ func (s *PluginSuite) TestDeleteRegistrationEntry() {
 			{Type: "Type4", Value: "Value4"},
 			{Type: "Type5", Value: "Value5"},
 		},
-		SpiffeId: "spiffe://example.org/baz",
-		ParentId: "spiffe://example.org/bat",
-		Ttl:      2,
+		SpiffeId:    "spiffe://example.org/baz",
+		ParentId:    "spiffe://example.org/bat",
+		X509SvidTtl: 2,
 	})
 
 	// We have two registration entries
@@ -3934,11 +3957,11 @@ func (s *PluginSuite) TestMigration() {
 			switch schemaVersion {
 			// All of these schema versions were migrated by previous versions
 			// of SPIRE server and no longer have migration code.
-			case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17:
+			case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18:
 				prepareDB(false)
-			case 18:
+			case 19:
 				prepareDB(true)
-				require.True(s.ds.db.Dialect().HasColumn("registered_entries", "x509_svid_ttl"))
+				require.False(s.ds.db.Dialect().HasColumn("registered_entries", "x509_svid_ttl"))
 				require.True(s.ds.db.Dialect().HasColumn("registered_entries", "jwt_svid_ttl"))
 			default:
 				t.Fatalf("no migration test added for schema version %d", schemaVersion)
