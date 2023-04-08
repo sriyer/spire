@@ -133,65 +133,7 @@ func (p *Plugin) AidAttestation(stream nodeattestorv1.NodeAttestor_AidAttestatio
 	return nil
 }
 
-// func (p *Plugin) AidOldAttestation(stream nodeattestorv1.NodeAttestor_AidAttestationServer) (err error) {
-// 	client := gokrbclient.NewClientWithKeytab(p.username, p.realm, p.keytab, p.krbConfig)
-// 	defer client.Destroy()
 
-// 	// Step 1: Log into the KDC and fetch TGT (Ticket-Granting Ticket) from KDC AS (Authentication Service)
-// 	if err := client.Login(); err != nil {
-// 		return common.PluginErr.New("[AS_REQ] logging in: %v", err)
-// 	}
-
-// 	// Step 2: Use the TGT to fetch Service Ticket of SPIRE server from KDC TGS (Ticket-Granting Service)
-// 	serviceTkt, encryptionKey, err := client.GetServiceTicket(p.spn)
-// 	if err != nil {
-// 		return common.PluginErr.New("[TGS_REQ] requesting service ticket: %v", err)
-// 	}
-
-// 	// Step 3: Create an authenticator including client's info and timestamp
-// 	authenticator, err := gokrbtypes.NewAuthenticator(client.Credentials.Domain(), client.Credentials.CName())
-// 	if err != nil {
-// 		return common.PluginErr.New("[KRB_AP_REQ] building Kerberos authenticator: %v", err)
-// 	}
-
-// 	encryptionType, err := gokrbcrypto.GetEtype(encryptionKey.KeyType)
-// 	if err != nil {
-// 		return common.PluginErr.New("[KRB_AP_REQ] getting encryption key type: %v", err)
-// 	}
-
-// 	err = authenticator.GenerateSeqNumberAndSubKey(encryptionType.GetETypeID(), encryptionType.GetKeyByteSize())
-// 	if err != nil {
-// 		return common.PluginErr.New("[KRB_AP_REQ] generating authenticator sequence number and subkey: %v", err)
-// 	}
-
-// 	// Step 4: Create an AP (Authentication Protocol) request which will be decrypted by SPIRE server's kerberos
-// 	// attestor
-// 	krbAPReq, err := gokrbmsgs.NewAPReq(serviceTkt, encryptionKey, authenticator)
-// 	if err != nil {
-// 		return common.PluginErr.New("[KRB_AP_REQ] building KRB_AP_REQ: %v", err)
-// 	}
-
-// 	attestedData := common.KrbAttestedData{
-// 		KrbAPReq: krbAPReq,
-// 	}
-
-// 	data, err := json.Marshal(attestedData)
-// 	if err != nil {
-// 		return common.PluginErr.New("marshaling KRB_AP_REQ for transport: %v", err)
-// 	}
-
-// 	resp := &nodeattestorv1.PayloadOrChallengeResponse{
-// 		Data: &nodeattestorv1.PayloadOrChallengeResponse_Payload{
-// 			Payload: data,
-// 		},
-// 	}
-
-// 	if err := stream.Send(resp); err != nil {
-// 		return err
-// 	}
-
-// 	return nil
-// }
 
 func (p *Plugin) Configure(ctx context.Context, req *configv1.ConfigureRequest) (*configv1.ConfigureResponse, error) {
 	config := new(Config)
